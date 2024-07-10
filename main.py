@@ -1,6 +1,5 @@
-import gymnasium as gym
-
 from stable_baselines3 import AVEC_PPO, PPO, CORRECTED_AVEC_PPO
+from stable_baselines3.common.env_util import make_vec_env
 from wandb.integration.sb3 import WandbCallback
 from stable_baselines3.common.utils import set_random_seed
 import wandb
@@ -22,7 +21,7 @@ if __name__ == "__main__":
             "env": env_name,
         },
     )
-    env = gym.make(env_name)
+    env = make_vec_env(env_name, n_envs=4)
     if mode == "AVEC":
         model = AVEC_PPO("MlpPolicy", env, verbose=1, tensorboard_log=f"runs/{run.id}")
     elif mode == "CORRECTED_AVEC":
