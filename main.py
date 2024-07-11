@@ -16,7 +16,7 @@ if __name__ == "__main__":
     n_timesteps = int(1e6)
     num_envs = 4
 
-    agents_dict = {"AVEC": AVEC_PPO, "CORRECTED_AVEC": CORRECTED_AVEC_PPO, "PPO": PPO}
+    agents_dict = {"AVEC_PPO": AVEC_PPO, "CORRECTED_AVEC_PPO": CORRECTED_AVEC_PPO, "PPO": PPO}
 
     set_random_seed(seed)
 
