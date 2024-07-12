@@ -68,6 +68,7 @@ if __name__ == "__main__":
             "mode": mode,
             "env": env_name,
             "seed": seed,
+            "batch size factor": batch_size_factor,
         },
     )
     env = make_vec_env(env_name, n_envs=n_envs)
