@@ -6,6 +6,7 @@ from stable_baselines3.common.utils import set_random_seed
 import wandb
 import sys
 import torch
+import torch.nn as nn
 import yaml
 
 DEFAULT_BATCH_SIZE = 64
@@ -53,7 +54,7 @@ if __name__ == "__main__":
     set_random_seed(seed)
     agents_dict = {"AVEC_PPO": AVEC_PPO, "CORRECTED_AVEC_PPO": CORRECTED_AVEC_PPO, "PPO": PPO}
 
-    hyperparams_data = read_hyperparams_data("ppo.yml")
+    hyperparams_data = read_hyperparams_data("/home/yberthel/AVEC/ppo.yml")
     n_envs, policy, hyperparams = parse_hyperparams(env_name, hyperparams_data)  # TODO : change batch_size with batch_factor
     if "batch_size" in hyperparams.keys():
         hyperparams["batch_size"] *= batch_size_factor
