@@ -57,9 +57,9 @@ if __name__ == "__main__":
     hyperparams_data = read_hyperparams_data("/home/yberthel/AVEC/ppo.yml")
     n_envs, policy, hyperparams = parse_hyperparams(env_name, hyperparams_data)  # TODO : change batch_size with batch_factor
     if "batch_size" in hyperparams.keys():
-        hyperparams["batch_size"] *= batch_size_factor
+        hyperparams["batch_size"] *= int(batch_size_factor)
     else:
-        hyperparams["batch_size"] = DEFAULT_BATCH_SIZE * batch_size_factor
+        hyperparams["batch_size"] = int(DEFAULT_BATCH_SIZE * batch_size_factor)
     run = wandb.init(
         project="avec experiments 2",
         sync_tensorboard=True,
