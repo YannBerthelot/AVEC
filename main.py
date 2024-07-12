@@ -46,7 +46,7 @@ if __name__ == "__main__":
     env_name = str(sys.argv[2])
     seed = int(sys.argv[1])
     mode = str(sys.argv[3])
-    batch_size_factor = int(sys.argv[4])
+    batch_size_factor = float(sys.argv[4])
     n_timesteps = int(1e6)
 
     num_threads = 2
