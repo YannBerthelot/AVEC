@@ -60,7 +60,7 @@ if __name__ == "__main__":
     else:
         hyperparams["batch_size"] = DEFAULT_BATCH_SIZE * batch_size_factor
     run = wandb.init(
-        project="avec experiments",
+        project="avec experiments 2",
         sync_tensorboard=True,
         config={
             "agent": "PPO",
