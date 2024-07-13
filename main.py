@@ -1,6 +1,7 @@
 #!/home/yberthel/AVEC/venv/bin/python
 from stable_baselines3 import AVEC_PPO, PPO, CORRECTED_AVEC_PPO
 from stable_baselines3.common.env_util import make_vec_env
+from stable_baselines3.common.vec_env.vec_normalize import VecNormalize
 from wandb.integration.sb3 import WandbCallback
 from stable_baselines3.common.utils import set_random_seed
 import wandb
@@ -24,7 +25,7 @@ def read_hyperparams_data(file_name):
 def parse_hyperparams(env_name, hyperparams_data):
     hyperparams = hyperparams_data[env_name]
     if "normalize" in hyperparams.keys():
-        hyperparams["normalize_advantage"] = hyperparams.pop("normalize")
+        normalize = hyperparams.pop("normalize")
     if "n_envs" in hyperparams.keys():
         n_envs = hyperparams.pop("n_envs")
     else:
@@ -39,7 +40,7 @@ def parse_hyperparams(env_name, hyperparams_data):
         if isinstance(hyperparams["policy_kwargs"], str):
             hyperparams["policy_kwargs"] = eval(hyperparams["policy_kwargs"])
             assert isinstance(hyperparams["policy_kwargs"], dict)
-    return n_envs, policy, hyperparams
+    return n_envs, policy, hyperparams, normalize
 
 
 if __name__ == "__main__":
@@ -55,13 +56,15 @@ if __name__ == "__main__":
     agents_dict = {"AVEC_PPO": AVEC_PPO, "CORRECTED_AVEC_PPO": CORRECTED_AVEC_PPO, "PPO": PPO}
 
     hyperparams_data = read_hyperparams_data("/home/yberthel/AVEC/ppo.yml")
-    n_envs, policy, hyperparams = parse_hyperparams(env_name, hyperparams_data)  # TODO : change batch_size with batch_factor
+    n_envs, policy, hyperparams, normalize = parse_hyperparams(
+        env_name, hyperparams_data
+    )  # TODO : change batch_size with batch_factor
     if "batch_size" in hyperparams.keys():
         hyperparams["batch_size"] = int(batch_size_factor * hyperparams["batch_size"])
     else:
         hyperparams["batch_size"] = int(DEFAULT_BATCH_SIZE * batch_size_factor)
     run = wandb.init(
-        project="avec experiments 2",
+        project="avec experiments 3",
         sync_tensorboard=True,
         config={
             "agent": "PPO",
@@ -72,6 +75,8 @@ if __name__ == "__main__":
         },
     )
     env = make_vec_env(env_name, n_envs=n_envs)
+    if normalize:
+        env = VecNormalize(env, gamma=hyperparams["gamma"])
     agent = agents_dict[mode]
     model = agent(policy, env, tensorboard_log=f"runs/{run.id}", **hyperparams)
     model.learn(total_timesteps=n_timesteps, callback=WandbCallback())
