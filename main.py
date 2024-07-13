@@ -49,35 +49,35 @@ if __name__ == "__main__":
     mode = str(sys.argv[3])
     n_steps_factor = float(sys.argv[4])
     n_timesteps = int(1e6)
+    for n_steps_factor in [1, 2, 4]:
+        num_threads = 2
+        torch.set_num_threads(num_threads)
+        set_random_seed(seed)
+        agents_dict = {"AVEC_PPO": AVEC_PPO, "CORRECTED_AVEC_PPO": CORRECTED_AVEC_PPO, "PPO": PPO}
 
-    num_threads = 2
-    torch.set_num_threads(num_threads)
-    set_random_seed(seed)
-    agents_dict = {"AVEC_PPO": AVEC_PPO, "CORRECTED_AVEC_PPO": CORRECTED_AVEC_PPO, "PPO": PPO}
-
-    hyperparams_data = read_hyperparams_data("/home/yberthel/AVEC/ppo.yml")
-    n_envs, policy, hyperparams, normalize = parse_hyperparams(
-        env_name, hyperparams_data
-    )  # TODO : change batch_size with batch_factor
-    if "batch_size" in hyperparams.keys():
-        hyperparams["n_steps"] = int(n_steps_factor * hyperparams["n_steps"])
-    else:
-        hyperparams["n_steps"] = int(DEFAULT_N_STEPS * n_steps_factor)
-    run = wandb.init(
-        project="avec experiments 3",
-        sync_tensorboard=True,
-        config={
-            "agent": "PPO",
-            "mode": mode,
-            "env": env_name,
-            "seed": seed,
-            "rollout size factor": n_steps_factor,
-        },
-    )
-    env = make_vec_env(env_name, n_envs=n_envs)
-    if normalize:
-        env = VecNormalize(env, gamma=hyperparams["gamma"] if "gamma" in hyperparams.keys() else 0.99)
-    agent = agents_dict[mode]
-    model = agent(policy, env, tensorboard_log=f"runs/{run.id}", **hyperparams)
-    model.learn(total_timesteps=n_timesteps, callback=WandbCallback())
-    run.finish()
+        hyperparams_data = read_hyperparams_data("/home/yberthel/AVEC/ppo.yml")
+        n_envs, policy, hyperparams, normalize = parse_hyperparams(
+            env_name, hyperparams_data
+        )  # TODO : change batch_size with batch_factor
+        if "batch_size" in hyperparams.keys():
+            hyperparams["n_steps"] = int(n_steps_factor * hyperparams["n_steps"])
+        else:
+            hyperparams["n_steps"] = int(DEFAULT_N_STEPS * n_steps_factor)
+        run = wandb.init(
+            project="avec experiments 3",
+            sync_tensorboard=True,
+            config={
+                "agent": "PPO",
+                "mode": mode,
+                "env": env_name,
+                "seed": seed,
+                "rollout size factor": n_steps_factor,
+            },
+        )
+        env = make_vec_env(env_name, n_envs=n_envs)
+        if normalize:
+            env = VecNormalize(env, gamma=hyperparams["gamma"] if "gamma" in hyperparams.keys() else 0.99)
+        agent = agents_dict[mode]
+        model = agent(policy, env, tensorboard_log=f"runs/{run.id}", **hyperparams)
+        model.learn(total_timesteps=n_timesteps, callback=WandbCallback())
+        run.finish()
