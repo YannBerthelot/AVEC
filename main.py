@@ -10,7 +10,7 @@ import torch
 import torch.nn as nn
 import yaml
 
-DEFAULT_BATCH_SIZE = 64
+DEFAULT_N_STEPS = 2048
 
 
 def read_hyperparams_data(file_name):
@@ -47,7 +47,7 @@ if __name__ == "__main__":
     env_name = str(sys.argv[2])
     seed = int(sys.argv[1])
     mode = str(sys.argv[3])
-    batch_size_factor = float(sys.argv[4])
+    n_steps_factor = float(sys.argv[4])
     n_timesteps = int(1e6)
 
     num_threads = 2
@@ -60,9 +60,9 @@ if __name__ == "__main__":
         env_name, hyperparams_data
     )  # TODO : change batch_size with batch_factor
     if "batch_size" in hyperparams.keys():
-        hyperparams["batch_size"] = int(batch_size_factor * hyperparams["batch_size"])
+        hyperparams["n_steps"] = int(n_steps_factor * hyperparams["n_steps"])
     else:
-        hyperparams["batch_size"] = int(DEFAULT_BATCH_SIZE * batch_size_factor)
+        hyperparams["n_steps"] = int(DEFAULT_N_STEPS * n_steps_factor)
     run = wandb.init(
         project="avec experiments 3",
         sync_tensorboard=True,
@@ -71,7 +71,7 @@ if __name__ == "__main__":
             "mode": mode,
             "env": env_name,
             "seed": seed,
-            "batch size factor": batch_size_factor,
+            "rollout size factor": n_steps_factor,
         },
     )
     env = make_vec_env(env_name, n_envs=n_envs)
