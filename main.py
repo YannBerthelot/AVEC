@@ -76,7 +76,7 @@ if __name__ == "__main__":
     )
     env = make_vec_env(env_name, n_envs=n_envs)
     if normalize:
-        env = VecNormalize(env, gamma=hyperparams["gamma"] if "gamma" in hyperparams.keys else 0.99)
+        env = VecNormalize(env, gamma=hyperparams["gamma"] if "gamma" in hyperparams.keys() else 0.99)
     agent = agents_dict[mode]
     model = agent(policy, env, tensorboard_log=f"runs/{run.id}", **hyperparams)
     model.learn(total_timesteps=n_timesteps, callback=WandbCallback())
