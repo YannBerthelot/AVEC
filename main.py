@@ -1,7 +1,7 @@
 #!/home/yberthel/AVEC/venv/bin/python
 from stable_baselines3 import AVEC_PPO, PPO, CORRECTED_AVEC_PPO
 from stable_baselines3.common.env_util import make_vec_env
-from stable_baselines3.common.vec_env.vec_normalize import VecNormalize
+from stable_baselines3.common.vec_env import VecNormalize
 from wandb.integration.sb3 import WandbCallback
 from stable_baselines3.common.utils import set_random_seed
 import wandb
@@ -76,7 +76,7 @@ if __name__ == "__main__":
     )
     env = make_vec_env(env_name, n_envs=n_envs)
     if normalize:
-        env = VecNormalize(env, gamma=hyperparams["gamma"])
+        env = VecNormalize(env, gamma=hyperparams["gamma"] if "gamma" in hyperparams.keys else 0.99)
     agent = agents_dict[mode]
     model = agent(policy, env, tensorboard_log=f"runs/{run.id}", **hyperparams)
     model.learn(total_timesteps=n_timesteps, callback=WandbCallback())
