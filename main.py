@@ -66,7 +66,7 @@ if __name__ == "__main__":
         else:
             hyperparams["n_steps"] = int(DEFAULT_N_STEPS * n_steps_factor)
         if "policy_kwargs" in hyperparams.keys():
-            policy_kwargs = eval(hyperparams["policy_kwargs"])
+            policy_kwargs = hyperparams["policy_kwargs"]
             if "net_arch" in policy_kwargs.keys():
                 net_arch = policy_kwargs["net_arch"]
                 net_arch["vf"] = [int(x * network_size_factor) for x in net_arch["vf"]]
