@@ -44,18 +44,20 @@ def parse_hyperparams(env_name, hyperparams_data):
 
 
 if __name__ == "__main__":
-    env_name = str(sys.argv[2])
     seed = int(sys.argv[1])
+    env_name = str(sys.argv[2])
     mode = str(sys.argv[3])
     n_steps_factor = float(sys.argv[4])
+    network_size_factor = float(sys.argv[5])
+    alpha = float(sys.argv[6])
     n_timesteps = int(1e6)
     for n_steps_factor in [1, 2, 4]:
         num_threads = 2
         torch.set_num_threads(num_threads)
         set_random_seed(seed)
-        agents_dict = {"AVEC_PPO": AVEC_PPO, "CORRECTED_AVEC_PPO": CORRECTED_AVEC_PPO, "PPO": PPO}
 
         hyperparams_data = read_hyperparams_data("/home/yberthel/AVEC/ppo.yml")
+        # hyperparams_data = read_hyperparams_data("./ppo.yml")
         n_envs, policy, hyperparams, normalize = parse_hyperparams(
             env_name, hyperparams_data
         )  # TODO : change batch_size with batch_factor
@@ -63,8 +65,23 @@ if __name__ == "__main__":
             hyperparams["n_steps"] = int(n_steps_factor * hyperparams["n_steps"])
         else:
             hyperparams["n_steps"] = int(DEFAULT_N_STEPS * n_steps_factor)
+        if "policy_kwargs" in hyperparams.keys():
+            policy_kwargs = eval(hyperparams["policy_kwargs"])
+            if "net_arch" in policy_kwargs.keys():
+                net_arch = policy_kwargs["net_arch"]
+                net_arch["vf"] = [int(x * network_size_factor) for x in net_arch["vf"]]
+                policy_kwargs["net_arch"] = net_arch
+            hyperparams["policy_kwargs"] = policy_kwargs
+        else:
+            hyperparams["policy_kwargs"] = dict(
+                log_std_init=0,
+                ortho_init=True,
+                activation_fn=nn.Tanh,
+                net_arch=dict(pi=[64, 64], vf=[int(64 * network_size_factor), int(64 * network_size_factor)]),
+            )
+
         run = wandb.init(
-            project="avec experiments 3",
+            project="avec experiments test 4",
             sync_tensorboard=True,
             config={
                 "agent": "PPO",
@@ -72,12 +89,23 @@ if __name__ == "__main__":
                 "env": env_name,
                 "seed": seed,
                 "rollout size factor": n_steps_factor,
+                "critic network size factor": network_size_factor,
+                "alpha": alpha,
             },
         )
         env = make_vec_env(env_name, n_envs=n_envs)
         if normalize:
             env = VecNormalize(env, gamma=hyperparams["gamma"] if "gamma" in hyperparams.keys() else 0.99)
-        agent = agents_dict[mode]
+        if mode == "PPO":
+            agent = PPO
+        elif mode == "AVEC_PPO":
+            agent = AVEC_PPO
+            hyperparams["alpha"] = alpha
+            hyperparams["correction"] = False  # for logging, not needed
+        elif mode == "CORRECTED_AVEC_PPO":
+            agent = AVEC_PPO
+            hyperparams["alpha"] = alpha
+            hyperparams["correction"] = True
         model = agent(policy, env, tensorboard_log=f"runs/{run.id}", **hyperparams)
         model.learn(total_timesteps=n_timesteps, callback=WandbCallback())
         run.finish()

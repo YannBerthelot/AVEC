@@ -382,6 +382,8 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         monitor_wrapper: bool = True,
         policy_kwargs: Optional[Dict[str, Any]] = None,
         verbose: int = 0,
+        alpha: float = 0.0,
+        correction: bool = False,
         seed: Optional[int] = None,
         device: Union[th.device, str] = "auto",
         _init_setup_model: bool = True,
@@ -409,6 +411,8 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         self.gae_lambda = gae_lambda
         self.ent_coef = ent_coef
         self.vf_coef = vf_coef
+        self.alpha = alpha
+        self.correction = correction
         self.max_grad_norm = max_grad_norm
         self.rollout_buffer_class = rollout_buffer_class
         self.rollout_buffer_kwargs = rollout_buffer_kwargs or {}
@@ -434,6 +438,7 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
             gamma=self.gamma,
             gae_lambda=self.gae_lambda,
             n_envs=self.n_envs,
+            correction=self.correction,
             **self.rollout_buffer_kwargs,
         )
         self.policy = self.policy_class(  # type: ignore[assignment]

@@ -15,7 +15,7 @@ from stable_baselines3.common.utils import explained_variance, get_schedule_fn
 SelfPPO = TypeVar("SelfPPO", bound="AVEC_PPO")
 
 
-class AVEC_PPO(OnPolicyAlgorithm):
+class AVEC_PPO(AvecOnPolicyAlgorithm):
     """
     Proximal Policy Optimization algorithm (PPO) (clip version)
 
@@ -102,6 +102,8 @@ class AVEC_PPO(OnPolicyAlgorithm):
         tensorboard_log: Optional[str] = None,
         policy_kwargs: Optional[Dict[str, Any]] = None,
         verbose: int = 0,
+        alpha: float = 0.0,
+        correction: bool = False,
         seed: Optional[int] = None,
         device: Union[th.device, str] = "auto",
         _init_setup_model: bool = True,
@@ -126,6 +128,8 @@ class AVEC_PPO(OnPolicyAlgorithm):
             verbose=verbose,
             device=device,
             seed=seed,
+            alpha=alpha,
+            correction=correction,
             _init_setup_model=False,
             supported_action_spaces=(
                 spaces.Box,
@@ -242,7 +246,9 @@ class AVEC_PPO(OnPolicyAlgorithm):
                     )
                 # Value loss using the TD(gae_lambda) target
                 # values_unbiased = values_pred + np.mean(rollout_data.returns - values_pred)
-                value_loss = th.var(values_pred - rollout_data.returns)
+                var = th.var(values_pred - rollout_data.returns)
+                bias = th.mean(values_pred - rollout_data.returns)
+                value_loss = var + self.alpha * th.square(bias)
                 # value_loss = F.mse_loss(rollout_data.returns, values_pred)
                 value_losses.append(value_loss.item())
 
@@ -407,6 +413,8 @@ class CORRECTED_AVEC_PPO(AvecOnPolicyAlgorithm):
         tensorboard_log: Optional[str] = None,
         policy_kwargs: Optional[Dict[str, Any]] = None,
         verbose: int = 0,
+        alpha: float = 0.0,
+        correction: bool = False,
         seed: Optional[int] = None,
         device: Union[th.device, str] = "auto",
         _init_setup_model: bool = True,
@@ -431,6 +439,8 @@ class CORRECTED_AVEC_PPO(AvecOnPolicyAlgorithm):
             verbose=verbose,
             device=device,
             seed=seed,
+            alpha=alpha,
+            correction=correction,
             _init_setup_model=False,
             supported_action_spaces=(
                 spaces.Box,
@@ -546,7 +556,9 @@ class CORRECTED_AVEC_PPO(AvecOnPolicyAlgorithm):
                         values - rollout_data.old_values, -clip_range_vf, clip_range_vf
                     )
                 # Value loss using the TD(gae_lambda) target
-                value_loss = th.var(values_pred - rollout_data.returns)
+                var = th.var(values_pred - rollout_data.returns)
+                bias = th.mean(values_pred - rollout_data.returns)
+                value_loss = var + self.alpha * th.square(bias)
                 # value_loss = F.mse_loss(rollout_data.returns, values_pred)
                 value_losses.append(value_loss.item())
 

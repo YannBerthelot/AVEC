@@ -562,11 +562,13 @@ class AvecRolloutBuffer(BaseBuffer):
         gae_lambda: float = 1,
         gamma: float = 0.99,
         n_envs: int = 1,
+        correction: bool = False,
     ):
         super().__init__(buffer_size, observation_space, action_space, device, n_envs=n_envs)
         self.gae_lambda = gae_lambda
         self.gamma = gamma
         self.generator_ready = False
+        self.correction = correction
         self.reset()
 
     def reset(self) -> None:
@@ -609,7 +611,10 @@ class AvecRolloutBuffer(BaseBuffer):
         # Convert to numpy
         last_values = last_values.clone().cpu().numpy().flatten()  # type: ignore[assignment]
         last_gae_lam = 0
-        unbiased_values = self.unbiase_values(self.values, self.returns)
+        if self.correction:
+            unbiased_values = self.unbiase_values(self.values, self.returns)
+        else:
+            unbiased_values = self.values
         for step in reversed(range(self.buffer_size)):
             if step == self.buffer_size - 1:
                 next_non_terminal = 1.0 - dones.astype(np.float32)
