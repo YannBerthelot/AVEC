@@ -248,7 +248,7 @@ class AVEC_PPO(AvecOnPolicyAlgorithm):
                 # values_unbiased = values_pred + np.mean(rollout_data.returns - values_pred)
                 var = th.var(values_pred - rollout_data.returns)
                 bias = th.mean(values_pred - rollout_data.returns)
-                value_loss = var + self.alpha * th.square(bias)
+                value_loss = (1 - self.alpha) * var + self.alpha * th.square(bias)
                 # value_loss = F.mse_loss(rollout_data.returns, values_pred)
                 value_losses.append(value_loss.item())
 
