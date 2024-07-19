@@ -245,11 +245,10 @@ class AVEC_PPO(AvecOnPolicyAlgorithm):
                         values - rollout_data.old_values, -clip_range_vf, clip_range_vf
                     )
                 # Value loss using the TD(gae_lambda) target
-                # values_unbiased = values_pred + np.mean(rollout_data.returns - values_pred)
-                var = th.var(values_pred - rollout_data.returns)
-                bias = th.mean(values_pred - rollout_data.returns)
+                residual_errors = rollout_data.returns - values_pred
+                var = th.var(residual_errors, unbiased=False)
+                bias = th.mean(residual_errors)
                 value_loss = (1 - self.alpha) * var + self.alpha * th.square(bias)
-                # value_loss = F.mse_loss(rollout_data.returns, values_pred)
                 value_losses.append(value_loss.item())
 
                 # Entropy loss favor exploration
@@ -558,7 +557,7 @@ class CORRECTED_AVEC_PPO(AvecOnPolicyAlgorithm):
                 # Value loss using the TD(gae_lambda) target
                 var = th.var(values_pred - rollout_data.returns)
                 bias = th.mean(values_pred - rollout_data.returns)
-                value_loss = var + self.alpha * th.square(bias)
+                value_loss = (1 - self.alpha) * var + self.alpha * th.square(bias)
                 # value_loss = F.mse_loss(rollout_data.returns, values_pred)
                 value_losses.append(value_loss.item())
 

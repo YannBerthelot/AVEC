@@ -563,12 +563,14 @@ class AvecRolloutBuffer(BaseBuffer):
         gamma: float = 0.99,
         n_envs: int = 1,
         correction: bool = False,
+        alpha: float = 0,
     ):
         super().__init__(buffer_size, observation_space, action_space, device, n_envs=n_envs)
         self.gae_lambda = gae_lambda
         self.gamma = gamma
         self.generator_ready = False
         self.correction = correction
+        self.alpha = alpha
         self.reset()
 
     def reset(self) -> None:
@@ -587,7 +589,7 @@ class AvecRolloutBuffer(BaseBuffer):
         super().reset()
 
     def unbiase_values(self, current_values, old_returns):
-        return current_values + np.mean(old_returns - current_values)
+        return current_values + ((1 + self.alpha) / (1 - self.alpha)) * np.mean(old_returns - current_values)
 
     def compute_returns_and_advantage(self, last_values: th.Tensor, dones: np.ndarray) -> None:
         """
