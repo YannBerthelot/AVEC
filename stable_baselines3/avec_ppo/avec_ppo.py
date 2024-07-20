@@ -248,7 +248,9 @@ class AVEC_PPO(AvecOnPolicyAlgorithm):
                 residual_errors = rollout_data.returns - values_pred
                 var = th.var(residual_errors, unbiased=False)
                 bias = th.mean(residual_errors)
-                value_loss = (1 - self.alpha) * var + self.alpha * th.square(bias)
+                value_loss = value_loss = (1 / max(self.alpha, 1 - self.alpha)) * (
+                    (1 - self.alpha) * var + self.alpha * th.square(bias)
+                )
                 value_losses.append(value_loss.item())
 
                 # Entropy loss favor exploration
