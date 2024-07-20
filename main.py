@@ -85,7 +85,7 @@ if __name__ == "__main__":
             sync_tensorboard=True,
             config={
                 "agent": "PPO",
-                "mode": mode,
+                "mode": "value rescale PPO",
                 "env": env_name,
                 "seed": seed,
                 "rollout size factor": n_steps_factor,

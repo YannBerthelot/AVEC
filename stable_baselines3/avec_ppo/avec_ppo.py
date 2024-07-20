@@ -557,7 +557,7 @@ class CORRECTED_AVEC_PPO(AvecOnPolicyAlgorithm):
                 # Value loss using the TD(gae_lambda) target
                 var = th.var(values_pred - rollout_data.returns)
                 bias = th.mean(values_pred - rollout_data.returns)
-                value_loss = (1 - self.alpha) * var + self.alpha * th.square(bias)
+                value_loss = (1 / max(self.alpha, 1 - self.alpha)) * ((1 - self.alpha) * var + self.alpha * th.square(bias))
                 # value_loss = F.mse_loss(rollout_data.returns, values_pred)
                 value_losses.append(value_loss.item())
 
