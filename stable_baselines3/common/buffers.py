@@ -551,7 +551,6 @@ class AvecRolloutBuffer(BaseBuffer):
     episode_starts: np.ndarray
     log_probs: np.ndarray
     values: np.ndarray
-    old_values: np.ndarray
 
     def __init__(
         self,
@@ -580,16 +579,13 @@ class AvecRolloutBuffer(BaseBuffer):
         self.returns = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
         self.episode_starts = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
         self.values = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
-        self.old_returns = np.zeros(
-            (self.buffer_size, self.n_envs), dtype=np.float32
-        )  # TODO : replace by actual first critic values?
         self.log_probs = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
         self.advantages = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
         self.generator_ready = False
         super().reset()
 
     def unbiase_values(self, current_values, old_returns):
-        return current_values + ((1 + self.alpha) / (1 - self.alpha)) * np.mean(old_returns - current_values)
+        return current_values + (1 - 2 * self.alpha) / (1 - self.alpha) * np.mean(old_returns - current_values)
 
     def compute_returns_and_advantage(self, last_values: th.Tensor, dones: np.ndarray) -> None:
         """
@@ -629,7 +625,7 @@ class AvecRolloutBuffer(BaseBuffer):
             self.advantages[step] = last_gae_lam
         # TD(lambda) estimator, see Github PR #375 or "Telescoping in TD(lambda)"
         # in David Silver Lecture 4: https://www.youtube.com/watch?v=PnHCvfgC_ZA
-        self.returns = self.advantages + self.values
+        self.returns = self.advantages + unbiased_values
 
     def add(
         self,

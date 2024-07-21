@@ -1,5 +1,5 @@
 #!/home/yberthel/AVEC/venv/bin/python
-from stable_baselines3 import AVEC_PPO, PPO, CORRECTED_AVEC_PPO
+from stable_baselines3 import AVEC_PPO, PPO
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.vec_env import VecNormalize
 from wandb.integration.sb3 import WandbCallback
@@ -81,11 +81,11 @@ if __name__ == "__main__":
             )
 
         run = wandb.init(
-            project="avec experiments 6",
+            project="avec experiments : correction",
             sync_tensorboard=True,
             config={
                 "agent": "PPO",
-                "mode": "value rescale PPO",
+                "mode": mode,
                 "env": env_name,
                 "seed": seed,
                 "rollout size factor": n_steps_factor,
