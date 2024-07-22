@@ -248,9 +248,9 @@ class AVEC_PPO(AvecOnPolicyAlgorithm):
                 var = th.var(residual_errors, unbiased=False)
                 bias = th.mean(residual_errors)
                 value_loss = (1 / max(self.alpha, 1 - self.alpha)) * ((1 - self.alpha) * var + self.alpha * th.square(bias))
-                assert th.isclose(
-                    value_loss, F.mse_loss(rollout_data.returns, values_pred)
-                ), f"{value_loss=} {F.mse_loss(rollout_data.returns, values_pred)}"
+                # assert th.isclose(
+                #     value_loss, F.mse_loss(rollout_data.returns, values_pred)
+                # ), f"{value_loss=} {F.mse_loss(rollout_data.returns, values_pred)}"
                 value_losses.append(value_loss.item())
 
                 # Entropy loss favor exploration

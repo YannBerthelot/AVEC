@@ -81,7 +81,7 @@ if __name__ == "__main__":
             )
 
         run = wandb.init(
-            project="avec experiments : correction",
+            project="avec experiments correction",
             sync_tensorboard=True,
             config={
                 "agent": "PPO",
