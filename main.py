@@ -56,8 +56,8 @@ if __name__ == "__main__":
         torch.set_num_threads(num_threads)
         set_random_seed(seed)
 
-        hyperparams_data = read_hyperparams_data("/home/yberthel/AVEC/ppo.yml")
-        # hyperparams_data = read_hyperparams_data("./ppo.yml")
+        # hyperparams_data = read_hyperparams_data("/home/yberthel/AVEC/ppo.yml")
+        hyperparams_data = read_hyperparams_data("./ppo.yml")
         n_envs, policy, hyperparams, normalize = parse_hyperparams(
             env_name, hyperparams_data
         )  # TODO : change batch_size with batch_factor
@@ -106,6 +106,6 @@ if __name__ == "__main__":
             agent = AVEC_PPO
             hyperparams["alpha"] = alpha
             hyperparams["correction"] = True
-        model = agent(policy, env, tensorboard_log=f"runs/{run.id}", **hyperparams)
+        model = agent(policy, env, tensorboard_log=f"runs/{run.id}", **hyperparams, env_name=env_name)
         model.learn(total_timesteps=n_timesteps, callback=WandbCallback())
         run.finish()

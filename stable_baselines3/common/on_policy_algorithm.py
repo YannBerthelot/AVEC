@@ -18,16 +18,13 @@ SelfOnPolicyAlgorithm = TypeVar("SelfOnPolicyAlgorithm", bound="OnPolicyAlgorith
 
 from copy import deepcopy
 
+from stable_baselines3.common.env_util import make_vec_env
 
-def set_mujoco_state_and_get_obs(_envs: VecEnv, states):
+
+def set_mujoco_state_and_get_obs(env_name: str, num_envs: int, states):
     _obs = []
-    envs = deepcopy(_envs)
-    import pdb
-
-    pdb.set_trace()
+    envs = make_vec_env(env_name, n_envs=num_envs)
     envs.reset()
-    num_envs = envs.num_envs
-
     for i in range(num_envs):
         qpos = states[i]["qpos"]
         qvel = states[i]["qvel"]
@@ -429,7 +426,6 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
             tensorboard_log=tensorboard_log,
             supported_action_spaces=supported_action_spaces,
         )
-
         self.n_steps = n_steps
         self.gamma = gamma
         self.gae_lambda = gae_lambda
@@ -571,10 +567,9 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
             values = self.policy.predict_values(obs_as_tensor(new_obs, self.device))  # type: ignore[arg-type]
 
         if flag:
-            print(self._n_updates)
             errors = []
             for state in states:
-                eval_buffer = self.collect_rollouts_MC_from_state(state, self.env, n_rollout_steps=int(1e5))
+                eval_buffer = self.collect_rollouts_MC_from_state(state, n_rollout_steps=int(1e5))
                 states_values_MC = (eval_buffer.advantages * eval_buffer.episode_starts).sum(
                     axis=0
                 ) / eval_buffer.episode_starts.sum(axis=0)
@@ -642,10 +637,8 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
 
         assert self.env is not None
         TOTAL_UPDATES = total_timesteps // self.n_steps
-        print(f"{TOTAL_UPDATES=}")
         while self.num_timesteps < total_timesteps:
             flag = (self._n_updates / 10) % (int(0.10 * TOTAL_UPDATES)) == 0 and self._n_updates > 0
-            print(self._n_updates, flag, (self._n_updates / 10) % (int(0.10 * TOTAL_UPDATES)))
             continue_training = self.collect_rollouts(
                 self.env, callback, self.rollout_buffer, n_rollout_steps=self.n_steps, flag=flag
             )
@@ -675,7 +668,6 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
     def collect_rollouts_MC_from_state(
         self,
         states,
-        env: VecEnv,
         n_rollout_steps: int,
     ) -> bool:
         """
@@ -696,6 +688,7 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         self.policy.set_training_mode(False)
         _last_episode_starts = np.ones((self.env.num_envs,), dtype=bool)
         n_steps = 0
+        env, _last_obs = set_mujoco_state_and_get_obs(self.env_name, self.env.num_envs, states)
         evaluation_rollout_buffer = AvecRolloutBuffer(
             buffer_size=n_rollout_steps,
             observation_space=env.observation_space,
@@ -709,7 +702,6 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         if self.use_sde:
             self.policy.reset_noise(env.num_envs)
 
-        env, _last_obs = set_mujoco_state_and_get_obs(env, states)
         while n_steps < n_rollout_steps:
             if self.use_sde and self.sde_sample_freq > 0 and n_steps % self.sde_sample_freq == 0:
                 # Sample a new noise matrix
