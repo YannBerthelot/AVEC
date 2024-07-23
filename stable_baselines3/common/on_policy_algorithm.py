@@ -486,7 +486,7 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         assert self._last_obs is not None, "No previous observation was provided"
         # Switch to eval mode (this affects batch norm / dropout)
         self.policy.set_training_mode(False)
-        states = []
+        errors = []
         n_steps = 0
         rollout_buffer.reset()
         # Sample new weights for the state dependent exploration
@@ -522,8 +522,14 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
             new_obs, rewards, dones, infos = env.step(clipped_actions)
 
             if flag:
-                states.append([{"qvel": env.unwrapped.data.qvel, "qpos": env.unwrapped.data.qpos} for env in env.envs])
-
+                state = [{"qvel": env.unwrapped.data.qvel, "qpos": env.unwrapped.data.qpos} for env in env.envs]
+                eval_buffer = self.collect_rollouts_MC_from_state(state, n_rollout_steps=int(1e5))
+                states_values_MC = (eval_buffer.advantages * eval_buffer.episode_starts).sum(
+                    axis=0
+                ) / eval_buffer.episode_starts.sum(axis=0)
+                predicted_values = (eval_buffer.values * eval_buffer.episode_starts)[0]
+                error_value_pred = ((states_values_MC - predicted_values) ** 2).mean()
+                errors.append(error_value_pred)
             self.num_timesteps += env.num_envs
 
             # Give access to local variables
@@ -565,17 +571,6 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         with th.no_grad():
             # Compute value for the last timestep
             values = self.policy.predict_values(obs_as_tensor(new_obs, self.device))  # type: ignore[arg-type]
-
-        if flag:
-            errors = []
-            for state in states:
-                eval_buffer = self.collect_rollouts_MC_from_state(state, n_rollout_steps=int(1e5))
-                states_values_MC = (eval_buffer.advantages * eval_buffer.episode_starts).sum(
-                    axis=0
-                ) / eval_buffer.episode_starts.sum(axis=0)
-                predicted_values = (eval_buffer.values * eval_buffer.episode_starts)[0]
-                error_value_pred = ((states_values_MC - predicted_values) ** 2).mean()
-                errors.append(error_value_pred)
             self.logger.record("value prediction error", np.mean(errors))
         rollout_buffer.compute_returns_and_advantage(last_values=values, dones=dones)
 
