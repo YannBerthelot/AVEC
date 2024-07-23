@@ -51,7 +51,7 @@ if __name__ == "__main__":
     network_size_factor = float(sys.argv[5])
     alpha = float(sys.argv[6])
     n_timesteps = int(1e6)
-    for alpha in [0.5, 0, 0.1, 0.2, 0.3, 0.4, 0.6, 0.7, 0.8, 0.9, 1.0]:
+    for alpha in [0.5]:
         num_threads = 2
         torch.set_num_threads(num_threads)
         set_random_seed(seed)
@@ -81,7 +81,7 @@ if __name__ == "__main__":
             )
 
         run = wandb.init(
-            project="avec experiments correction",
+            project="avec experiments MC value estimation",
             sync_tensorboard=True,
             config={
                 "agent": "PPO",
