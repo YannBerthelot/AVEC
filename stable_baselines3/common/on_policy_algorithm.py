@@ -16,6 +16,7 @@ from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedul
 from stable_baselines3.common.utils import obs_as_tensor, safe_mean
 from stable_baselines3.common.vec_env import VecEnv
 from tqdm import tqdm
+
 SelfOnPolicyAlgorithm = TypeVar("SelfOnPolicyAlgorithm", bound="OnPolicyAlgorithm")
 
 from stable_baselines3.common.env_util import make_vec_env
@@ -430,8 +431,8 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         device: Union[th.device, str] = "auto",
         _init_setup_model: bool = True,
         supported_action_spaces: Optional[Tuple[Type[spaces.Space], ...]] = None,
-        n_eval_rollout_steps: int = int(1e5),
-        n_eval_rollout_envs: int = 32,
+        n_eval_rollout_steps: int = int(1e3),
+        n_eval_rollout_envs: int = 1,
     ):
         super().__init__(
             policy=policy,
@@ -518,11 +519,10 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
             self.policy.reset_noise(env.num_envs)
 
         callback.on_rollout_start()
-        
 
         N_SAMPLES = 100
-        # if flag:
-        #     pbar = tqdm(total=N_SAMPLES, desc="Collecting")
+        if flag:
+            pbar = tqdm(total=N_SAMPLES, desc="Collecting")
         samples = np.random.choice(n_rollout_steps, N_SAMPLES)
         while n_steps < n_rollout_steps:
             if self.use_sde and self.sde_sample_freq > 0 and n_steps % self.sde_sample_freq == 0:
@@ -549,8 +549,9 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
                     clipped_actions = np.clip(actions, self.action_space.low, self.action_space.high)
 
             new_obs, rewards, dones, infos = env.step(clipped_actions)
+            self.num_timesteps += env.num_envs
             if flag and (n_steps in samples):
-                # pbar.update(1)
+                pbar.update(1)
                 state = [{"qvel": env.unwrapped.data.qvel, "qpos": env.unwrapped.data.qpos} for env in env.envs]
                 state = state[0]  # TODO : find how to fix this?
                 eval_buffer = self.collect_rollouts_MC_from_state(
@@ -670,7 +671,7 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         assert self.env is not None
         TOTAL_UPDATES = total_timesteps // self.n_steps
         while self.num_timesteps < total_timesteps:
-            flag = ((self._n_updates / 10) % (int(0.10 * TOTAL_UPDATES)) == 0 and self._n_updates > 0) or self._n_updates == 10
+            flag = ((self._n_updates / 10) % (int(0.10 * TOTAL_UPDATES)) == 0) and self._n_updates > 0
 
             continue_training = self.collect_rollouts(
                 self.env, callback, self.rollout_buffer, n_rollout_steps=self.n_steps, flag=flag
@@ -686,6 +687,7 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
             if log_interval is not None and iteration % log_interval == 0:
                 assert self.ep_info_buffer is not None
                 self._dump_logs(iteration)
+            print("Dumping ", self.num_timesteps)
 
             self.train()
 
