@@ -431,7 +431,7 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         device: Union[th.device, str] = "auto",
         _init_setup_model: bool = True,
         supported_action_spaces: Optional[Tuple[Type[spaces.Space], ...]] = None,
-        n_eval_rollout_steps: int = int(1e3),
+        n_eval_rollout_steps: int = int(1e5),
         n_eval_rollout_envs: int = 1,
     ):
         super().__init__(
