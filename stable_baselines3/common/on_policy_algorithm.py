@@ -5,37 +5,58 @@ from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union
 import numpy as np
 import torch as th
 from gymnasium import spaces
-
+from stable_baselines3.common.vec_env.base_vec_env import VecEnv, VecEnvStepReturn, VecEnvWrapper
+from math import ceil
+from copy import deepcopy, copy
 from stable_baselines3.common.base_class import BaseAlgorithm
-from stable_baselines3.common.buffers import DictRolloutBuffer, AvecRolloutBuffer, RolloutBuffer
+from stable_baselines3.common.buffers import DictRolloutBuffer, AvecRolloutBuffer, RolloutBuffer, EvaluationAvecRolloutBuffer
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.policies import ActorCriticPolicy
 from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedule
 from stable_baselines3.common.utils import obs_as_tensor, safe_mean
 from stable_baselines3.common.vec_env import VecEnv
-
+from tqdm import tqdm
 SelfOnPolicyAlgorithm = TypeVar("SelfOnPolicyAlgorithm", bound="OnPolicyAlgorithm")
-
-from copy import deepcopy
 
 from stable_baselines3.common.env_util import make_vec_env
 
 
 def set_mujoco_state_and_get_obs(env_name: str, num_envs: int, states):
-    _obs = []
-    envs = make_vec_env(env_name, n_envs=num_envs)
-    envs.reset()
-    for i in range(num_envs):
-        qpos = states[i]["qpos"]
-        qvel = states[i]["qvel"]
-        envs.envs[i].unwrapped.set_state(qpos, qvel)
-        _obs.append(envs.envs[i].unwrapped._get_obs())
-    obs = np.array(_obs)
+    envs = MujocoResetWrapper(make_vec_env(env_name, n_envs=num_envs), state=states)
+    obs = envs.reset()
+
     return envs, obs
 
 
 def get_state_from_mujoco(env):
     return env.unwrapped.data
+
+
+class MujocoResetWrapper(VecEnvWrapper):
+    def __init__(self, venv: VecEnv, state):
+        super().__init__(venv)
+        self.state = state
+
+    def reset(self) -> np.ndarray:
+        self.reset_model()
+        obs = self.venv.reset()
+        obs = self.reset_model()
+        return obs
+
+    def step_async(self, actions: np.ndarray) -> None:
+        self.venv.step_async(actions)
+
+    def step_wait(self) -> VecEnvStepReturn:
+        obs, reward, done, info = self.venv.step_wait()
+        return obs, reward, done, info
+
+    def reset_model(self):
+        for i, env in enumerate(self.venv.envs):
+            qpos = deepcopy(self.state["qpos"])
+            qvel = deepcopy(self.state["qvel"])
+            self.venv.envs[i].unwrapped.set_state(qpos, qvel)
+        observation = np.array([env.unwrapped._get_obs() for env in self.venv.envs])
+        return observation
 
 
 class OnPolicyAlgorithm(BaseAlgorithm):
@@ -409,6 +430,8 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         device: Union[th.device, str] = "auto",
         _init_setup_model: bool = True,
         supported_action_spaces: Optional[Tuple[Type[spaces.Space], ...]] = None,
+        n_eval_rollout_steps: int = int(1e5),
+        n_eval_rollout_envs: int = 32,
     ):
         super().__init__(
             policy=policy,
@@ -436,7 +459,8 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         self.max_grad_norm = max_grad_norm
         self.rollout_buffer_class = rollout_buffer_class
         self.rollout_buffer_kwargs = rollout_buffer_kwargs or {}
-
+        self.n_eval_rollout_steps = n_eval_rollout_steps
+        self.n_eval_rollout_envs = n_eval_rollout_envs
         if _init_setup_model:
             self._setup_model()
 
@@ -494,7 +518,12 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
             self.policy.reset_noise(env.num_envs)
 
         callback.on_rollout_start()
+        
 
+        N_SAMPLES = 100
+        # if flag:
+        #     pbar = tqdm(total=N_SAMPLES, desc="Collecting")
+        samples = np.random.choice(n_rollout_steps, N_SAMPLES)
         while n_steps < n_rollout_steps:
             if self.use_sde and self.sde_sample_freq > 0 and n_steps % self.sde_sample_freq == 0:
                 # Sample a new noise matrix
@@ -520,18 +549,23 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
                     clipped_actions = np.clip(actions, self.action_space.low, self.action_space.high)
 
             new_obs, rewards, dones, infos = env.step(clipped_actions)
-
-            if flag:
+            if flag and (n_steps in samples):
+                # pbar.update(1)
                 state = [{"qvel": env.unwrapped.data.qvel, "qpos": env.unwrapped.data.qpos} for env in env.envs]
-                eval_buffer = self.collect_rollouts_MC_from_state(state, n_rollout_steps=int(1e5))
-                states_values_MC = (eval_buffer.advantages * eval_buffer.episode_starts).sum(
-                    axis=0
-                ) / eval_buffer.episode_starts.sum(axis=0)
-                predicted_values = (eval_buffer.values * eval_buffer.episode_starts)[0]
-                error_value_pred = ((states_values_MC - predicted_values) ** 2).mean()
+                state = state[0]  # TODO : find how to fix this?
+                eval_buffer = self.collect_rollouts_MC_from_state(
+                    self.n_eval_rollout_envs,
+                    state,
+                    n_rollout_steps=ceil(self.n_eval_rollout_steps / self.n_eval_rollout_envs),
+                )
+                states_values_MC = eval_buffer.advantages[eval_buffer.episode_starts.astype("bool")]
+                states_values_MC = (
+                    states_values_MC[: -eval_buffer.episode_starts.shape[1]]
+                    if eval_buffer.episode_starts.ndim > 1
+                    else states_values_MC[:-1]
+                )  # remove last one(s) as it is not a full episode
+                error_value_pred = ((states_values_MC.mean(axis=0) - values.detach().numpy()) ** 2).mean()
                 errors.append(error_value_pred)
-            self.num_timesteps += env.num_envs
-
             # Give access to local variables
             callback.update_locals(locals())
             if not callback.on_step():
@@ -568,9 +602,12 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
             self._last_obs = new_obs  # type: ignore[assignment]
             self._last_episode_starts = dones
 
+            # TODO : measure how long the episodes that are kept are
+
         with th.no_grad():
             # Compute value for the last timestep
             values = self.policy.predict_values(obs_as_tensor(new_obs, self.device))  # type: ignore[arg-type]
+        if len(errors) > 0:
             self.logger.record("value prediction error", np.mean(errors))
         rollout_buffer.compute_returns_and_advantage(last_values=values, dones=dones)
 
@@ -633,7 +670,8 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         assert self.env is not None
         TOTAL_UPDATES = total_timesteps // self.n_steps
         while self.num_timesteps < total_timesteps:
-            flag = (self._n_updates / 10) % (int(0.10 * TOTAL_UPDATES)) == 0 and self._n_updates > 0
+            flag = ((self._n_updates / 10) % (int(0.10 * TOTAL_UPDATES)) == 0 and self._n_updates > 0) or self._n_updates == 10
+
             continue_training = self.collect_rollouts(
                 self.env, callback, self.rollout_buffer, n_rollout_steps=self.n_steps, flag=flag
             )
@@ -662,6 +700,7 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
 
     def collect_rollouts_MC_from_state(
         self,
+        num_envs,
         states,
         n_rollout_steps: int,
     ) -> bool:
@@ -681,15 +720,16 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         assert self._last_obs is not None, "No previous observation was provided"
         # Switch to eval mode (this affects batch norm / dropout)
         self.policy.set_training_mode(False)
-        _last_episode_starts = np.ones((self.env.num_envs,), dtype=bool)
+        _last_episode_starts = np.ones((num_envs,), dtype=bool)
         n_steps = 0
-        env, _last_obs = set_mujoco_state_and_get_obs(self.env_name, self.env.num_envs, states)
-        evaluation_rollout_buffer = AvecRolloutBuffer(
+        num_timesteps = 0
+        env, _last_obs = set_mujoco_state_and_get_obs(self.env_name, num_envs, states)
+        evaluation_rollout_buffer = EvaluationAvecRolloutBuffer(
             buffer_size=n_rollout_steps,
             observation_space=env.observation_space,
             action_space=env.action_space,
             gamma=self.gamma,
-            n_envs=self.n_envs,
+            n_envs=num_envs,
             gae_lambda=1.0,  # MC
         )
         evaluation_rollout_buffer.reset()
@@ -722,8 +762,9 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
                     clipped_actions = np.clip(actions, self.action_space.low, self.action_space.high)
 
             new_obs, rewards, dones, infos = env.step(clipped_actions)
-
+            # TODO : investigate why no environment fail early?
             n_steps += 1
+            num_timesteps += num_envs
 
             if isinstance(self.action_space, spaces.Discrete):
                 # Reshape in case of discrete action
@@ -741,22 +782,16 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
                     with th.no_grad():
                         terminal_value = self.policy.predict_values(terminal_obs)[0]  # type: ignore[arg-type]
                     rewards[idx] += self.gamma * terminal_value
-
             evaluation_rollout_buffer.add(
                 _last_obs,  # type: ignore[arg-type]
                 actions,
                 rewards,
                 _last_episode_starts,  # type: ignore[arg-type]
-                values,
-                log_probs,
             )
+
             _last_obs = new_obs  # type: ignore[assignment]
             _last_episode_starts = dones
 
-        with th.no_grad():
-            # Compute value for the last timestep
-            values = self.policy.predict_values(obs_as_tensor(new_obs, self.device))  # type: ignore[arg-type]
-
-        evaluation_rollout_buffer.compute_returns_and_advantage(last_values=values, dones=dones)
+        evaluation_rollout_buffer.compute_returns_and_advantage(dones=dones)
 
         return evaluation_rollout_buffer
