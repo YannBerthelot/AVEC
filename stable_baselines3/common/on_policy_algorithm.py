@@ -431,7 +431,7 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         device: Union[th.device, str] = "auto",
         _init_setup_model: bool = True,
         supported_action_spaces: Optional[Tuple[Type[spaces.Space], ...]] = None,
-        n_eval_rollout_steps: int = int(1e5),
+        n_eval_rollout_steps: int = int(2e3),
         n_eval_rollout_envs: int = 1,
     ):
         super().__init__(
@@ -608,8 +608,7 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         with th.no_grad():
             # Compute value for the last timestep
             values = self.policy.predict_values(obs_as_tensor(new_obs, self.device))  # type: ignore[arg-type]
-        if len(errors) > 0:
-            self.logger.record("value prediction error", np.mean(errors))
+        self.logger.record("rollout/value prediction error", np.mean(errors))
         rollout_buffer.compute_returns_and_advantage(last_values=values, dones=dones)
 
         callback.update_locals(locals())
@@ -687,7 +686,6 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
             if log_interval is not None and iteration % log_interval == 0:
                 assert self.ep_info_buffer is not None
                 self._dump_logs(iteration)
-            print("Dumping ", self.num_timesteps)
 
             self.train()
 
