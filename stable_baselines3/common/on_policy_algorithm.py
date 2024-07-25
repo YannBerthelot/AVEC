@@ -431,8 +431,8 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         device: Union[th.device, str] = "auto",
         _init_setup_model: bool = True,
         supported_action_spaces: Optional[Tuple[Type[spaces.Space], ...]] = None,
-        n_eval_rollout_steps: int = int(1e4),
-        n_eval_rollout_envs: int = 1,
+        n_eval_rollout_steps: int = int(5),
+        n_eval_rollout_envs: int = 32,
     ):
         super().__init__(
             policy=policy,
@@ -521,7 +521,7 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
 
         callback.on_rollout_start()
 
-        N_SAMPLES = 10
+        N_SAMPLES = 100
         if flag:
             pbar = tqdm(total=N_SAMPLES, desc="Collecting")
         samples = np.random.choice(n_rollout_steps, N_SAMPLES)
@@ -578,8 +578,8 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
                 value_errors.append(value_error)
                 self.logger.record("value/value std ", np.std(predicted_values))
                 self.logger.record("value/value mean ", np.mean(predicted_values))
-                self.logger.record("value/error std ", np.std(value_errors))
-                self.logger.record("value/error mean ", np.mean(value_errors))
+                self.logger.record("errors/error std ", np.std(value_errors))
+                self.logger.record("errors/error mean ", np.mean(value_errors))
                 self.logger.record("value/eval step ", self.num_eval_timesteps)
                 self.logger.dump(step=self.num_timesteps)
             # Give access to local variables
@@ -626,10 +626,12 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
 
         rollout_buffer.compute_returns_and_advantage(last_values=values, dones=dones)
         if flag:
-            self.logger.record("value/value estimation error mean", np.mean(value_errors))
-            self.logger.record("value/value estimation error std", np.std(value_errors))
-            self.logger.record("value/value prediction error mean", np.mean(rollout_buffer.deltas))
-            self.logger.record("value/value prediction error std", np.std(rollout_buffer.deltas))
+            self.logger.record("errors/value estimation error mean", np.mean(value_errors))
+            self.logger.record("errors/value estimation error std", np.std(value_errors))
+            self.logger.record("errors/value prediction error mean", np.mean(rollout_buffer.deltas))
+            self.logger.record("errors/value prediction error std", np.std(rollout_buffer.deltas))
+            error_difference = np.mean((np.mean(value_errors) - np.mean(rollout_buffer.deltas)) ** 2)
+            self.logger.record("errors/errors difference", error_difference)
 
         callback.update_locals(locals())
 
