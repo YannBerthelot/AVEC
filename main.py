@@ -9,6 +9,9 @@ import sys
 import torch
 import torch.nn as nn
 import yaml
+import os
+import psutil
+
 
 DEFAULT_N_STEPS = 2048
 
@@ -52,12 +55,12 @@ if __name__ == "__main__":
     alpha = float(sys.argv[6])
     n_timesteps = int(1e6)
     for alpha in [0.5]:
-        num_threads = 2
+        num_threads = int(psutil.cpu_count() / psutil.cpu_count(logical=False))
         torch.set_num_threads(num_threads)
         set_random_seed(seed)
-
-        hyperparams_data = read_hyperparams_data("/home/yberthel/AVEC/ppo.yml")
-        # hyperparams_data = read_hyperparams_data("./ppo.yml")
+        dir_path = os.path.dirname(os.path.realpath(__file__))
+        # hyperparams_data = read_hyperparams_data("/home/yberthel/AVEC/ppo.yml")
+        hyperparams_data = read_hyperparams_data(os.path.join(dir_path, "ppo.yml"))
         n_envs, policy, hyperparams, normalize = parse_hyperparams(
             env_name, hyperparams_data
         )  # TODO : change batch_size with batch_factor

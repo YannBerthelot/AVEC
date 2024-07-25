@@ -431,7 +431,7 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         device: Union[th.device, str] = "auto",
         _init_setup_model: bool = True,
         supported_action_spaces: Optional[Tuple[Type[spaces.Space], ...]] = None,
-        n_eval_rollout_steps: int = int(1e5),
+        n_eval_rollout_steps: int = int(1e4),
         n_eval_rollout_envs: int = 1,
     ):
         super().__init__(
@@ -462,6 +462,7 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         self.rollout_buffer_kwargs = rollout_buffer_kwargs or {}
         self.n_eval_rollout_steps = n_eval_rollout_steps
         self.n_eval_rollout_envs = n_eval_rollout_envs
+        self.num_eval_timesteps = 0
         if _init_setup_model:
             self._setup_model()
 
@@ -520,10 +521,13 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
 
         callback.on_rollout_start()
 
-        N_SAMPLES = 100
+        N_SAMPLES = 10
         if flag:
             pbar = tqdm(total=N_SAMPLES, desc="Collecting")
         samples = np.random.choice(n_rollout_steps, N_SAMPLES)
+        value_errors = []
+        predicted_values = []
+        MC_values = np.array([])
         while n_steps < n_rollout_steps:
             if self.use_sde and self.sde_sample_freq > 0 and n_steps % self.sde_sample_freq == 0:
                 # Sample a new noise matrix
@@ -551,6 +555,7 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
             new_obs, rewards, dones, infos = env.step(clipped_actions)
             self.num_timesteps += env.num_envs
             if flag and (n_steps in samples):
+                self.num_eval_timesteps += 1
                 pbar.update(1)
                 state = [{"qvel": env.unwrapped.data.qvel, "qpos": env.unwrapped.data.qpos} for env in env.envs]
                 state = state[0]  # TODO : find how to fix this?
@@ -565,8 +570,18 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
                     if eval_buffer.episode_starts.ndim > 1
                     else states_values_MC[:-1]
                 )  # remove last one(s) as it is not a full episode
-                error_value_pred = ((states_values_MC.mean(axis=0) - values.detach().numpy()) ** 2).mean()
-                errors.append(error_value_pred)
+                MC_values = np.concatenate((MC_values, states_values_MC), axis=None)
+                self.logger.record("value/value MC mean", np.mean(MC_values))
+                self.logger.record("value/value MC std", np.std(MC_values))
+                predicted_values.append(values.detach().numpy())
+                value_error = (states_values_MC.mean(axis=0) - values.detach().numpy()) ** 2
+                value_errors.append(value_error)
+                self.logger.record("value/value std ", np.std(predicted_values))
+                self.logger.record("value/value mean ", np.mean(predicted_values))
+                self.logger.record("value/error std ", np.std(value_errors))
+                self.logger.record("value/error mean ", np.mean(value_errors))
+                self.logger.record("value/eval step ", self.num_eval_timesteps)
+                self.logger.dump(step=self.num_timesteps)
             # Give access to local variables
             callback.update_locals(locals())
             if not callback.on_step():
@@ -608,8 +623,13 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         with th.no_grad():
             # Compute value for the last timestep
             values = self.policy.predict_values(obs_as_tensor(new_obs, self.device))  # type: ignore[arg-type]
-        self.logger.record("rollout/value prediction error", np.mean(errors))
+
         rollout_buffer.compute_returns_and_advantage(last_values=values, dones=dones)
+        if flag:
+            self.logger.record("value/value estimation error mean", np.mean(value_errors))
+            self.logger.record("value/value estimation error std", np.std(value_errors))
+            self.logger.record("value/value prediction error mean", np.mean(rollout_buffer.deltas))
+            self.logger.record("value/value prediction error std", np.std(rollout_buffer.deltas))
 
         callback.update_locals(locals())
 
