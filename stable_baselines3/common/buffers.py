@@ -1120,9 +1120,6 @@ class EvaluationAvecRolloutBuffer(BaseBuffer):
         #     last_gae_lam = delta + self.gamma * self.gae_lambda * next_non_terminal * last_gae_lam
         #     self.advantages[step] = last_gae_lam
 
-        step_return = 0
-        advantage = 0
-
         for step in reversed(range(self.buffer_size)):
             if step == self.buffer_size - 1:
                 next_non_terminal = 1.0 - dones.astype(np.float32)
@@ -1130,19 +1127,16 @@ class EvaluationAvecRolloutBuffer(BaseBuffer):
             else:
                 next_non_terminal = 1.0 - self.episode_starts[step + 1]
                 next_return = self.returns[step + 1]
-
+                
             # delta = self.rewards[step] + self.gamma * next_reward * next_non_terminal - step_return
             # advantage = delta + self.gamma * next_non_terminal * advantage
             # self.advantages[step] = advantage
 
-            non_terminal = 1.0 - self.episode_starts[step]
-            self.returns[step] = non_terminal * (self.rewards[step] + self.gamma * next_return * next_non_terminal)
-            delta = self.rewards[step] + self.gamma * next_return * next_non_terminal - self.returns[step]
-            advantage = delta + self.gamma * next_non_terminal * advantage
-            self.advantages[step] = advantage
+            self.returns[step] = self.rewards[step] + self.gamma * next_return * next_non_terminal
+
         # TD(lambda) estimator, see Github PR #375 or "Telescoping in TD(lambda)"
         # in David Silver Lecture 4: https://www.youtube.com/watch?v=PnHCvfgC_ZA
-        self.returns = self.advantages + self.rewards
+        # self.returns = self.advantages + self.rewards
 
     def add(
         self,

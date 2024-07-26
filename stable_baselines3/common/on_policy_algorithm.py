@@ -432,7 +432,7 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         _init_setup_model: bool = True,
         supported_action_spaces: Optional[Tuple[Type[spaces.Space], ...]] = None,
         n_eval_rollout_steps: int = int(1e5),
-        n_eval_rollout_envs: int = 32,
+        n_eval_rollout_envs: int = 1,
     ):
         super().__init__(
             policy=policy,
@@ -564,7 +564,7 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
                     state,
                     n_rollout_steps=ceil(self.n_eval_rollout_steps / self.n_eval_rollout_envs),
                 )
-                states_values_MC = eval_buffer.advantages[eval_buffer.episode_starts.astype("bool")]
+                states_values_MC = eval_buffer.returns[eval_buffer.episode_starts.astype("bool")]
                 states_values_MC = (
                     states_values_MC[: -eval_buffer.episode_starts.shape[1]]
                     if eval_buffer.episode_starts.ndim > 1
@@ -626,10 +626,10 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
 
         rollout_buffer.compute_returns_and_advantage(last_values=values, dones=dones)
         if flag:
-            self.logger.record("errors/value estimation error mean", np.mean(value_errors))
-            self.logger.record("errors/value estimation error std", np.std(value_errors))
-            self.logger.record("errors/value prediction error mean", np.mean(rollout_buffer.deltas))
-            self.logger.record("errors/value prediction error std", np.std(rollout_buffer.deltas))
+            self.logger.record("errors/value approximation error mean", np.mean(value_errors))
+            self.logger.record("errors/value approximation error std", np.std(value_errors))
+            self.logger.record("errors/value estimation error mean", np.mean(rollout_buffer.deltas))
+            self.logger.record("errors/value estimation error std", np.std(rollout_buffer.deltas))
             error_difference = np.mean((np.mean(value_errors) - np.mean(rollout_buffer.deltas)) ** 2)
             self.logger.record("errors/errors difference", error_difference)
 
