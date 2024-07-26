@@ -1136,7 +1136,7 @@ class EvaluationAvecRolloutBuffer(BaseBuffer):
             # self.advantages[step] = advantage
 
             non_terminal = 1.0 - self.episode_starts[step]
-            self.returns[step] = non_terminal(self.rewards[step] + self.gamma * next_return * next_non_terminal)
+            self.returns[step] = non_terminal * (self.rewards[step] + self.gamma * next_return * next_non_terminal)
             delta = self.rewards[step] + self.gamma * next_return * next_non_terminal - self.returns[step]
             advantage = delta + self.gamma * next_non_terminal * advantage
             self.advantages[step] = advantage

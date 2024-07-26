@@ -431,7 +431,7 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         device: Union[th.device, str] = "auto",
         _init_setup_model: bool = True,
         supported_action_spaces: Optional[Tuple[Type[spaces.Space], ...]] = None,
-        n_eval_rollout_steps: int = int(5),
+        n_eval_rollout_steps: int = int(1e5),
         n_eval_rollout_envs: int = 32,
     ):
         super().__init__(
@@ -769,7 +769,6 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
                 obs_tensor = obs_as_tensor(_last_obs, self.device)
                 actions, values, log_probs = self.policy(obs_tensor)
             actions = actions.cpu().numpy()
-
             # Rescale and perform action
             clipped_actions = actions
 
