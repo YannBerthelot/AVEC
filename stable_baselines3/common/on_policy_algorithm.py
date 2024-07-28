@@ -1,3 +1,4 @@
+import pdb
 import sys
 import time
 from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union
@@ -5,6 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union
 import numpy as np
 import torch as th
 from gymnasium import spaces
+import gymnasium as gym
 from stable_baselines3.common.vec_env.base_vec_env import VecEnv, VecEnvStepReturn, VecEnvWrapper
 from math import ceil
 from copy import deepcopy, copy
@@ -21,42 +23,52 @@ SelfOnPolicyAlgorithm = TypeVar("SelfOnPolicyAlgorithm", bound="OnPolicyAlgorith
 
 from stable_baselines3.common.env_util import make_vec_env
 
+from gymnasium import Wrapper
 
-def set_mujoco_state_and_get_obs(env_name: str, num_envs: int, states):
-    envs = MujocoResetWrapper(make_vec_env(env_name, n_envs=num_envs), state=states)
-    obs = envs.reset()
 
-    return envs, obs
+def get_fixed_reset_state_env(env_name: str, num_envs: int, states):
+    # env = gym.make(env_name, max_episode_steps=int(1e3))
+    env = make_vec_env(env_id=env_name, n_envs=num_envs, wrapper_class=MujocoResetWrapper, wrapper_kwargs={"state": states})
+
+    # env = make_vec_env(MujocoResetWrapper, n_envs=num_envs, env_kwargs={"env": env, "state": states})
+    return env
 
 
 def get_state_from_mujoco(env):
     return env.unwrapped.data
 
 
-class MujocoResetWrapper(VecEnvWrapper):
-    def __init__(self, venv: VecEnv, state):
-        super().__init__(venv)
+import mujoco
+from gymnasium import Env
+
+
+class MujocoResetWrapper(Wrapper):
+    def __init__(self, env: Env, state):
+        super().__init__(env)
         self.state = state
 
-    def reset(self) -> np.ndarray:
-        self.reset_model()
-        obs = self.venv.reset()
-        obs = self.reset_model()
-        return obs
+    def reset(
+        self,
+        *,
+        seed: Optional[int] = None,
+        options: Optional[dict] = None,
+    ):
+        self.env.reset(seed=seed)
 
-    def step_async(self, actions: np.ndarray) -> None:
-        self.venv.step_async(actions)
+        mujoco.mj_resetData(self.model, self.data)
 
-    def step_wait(self) -> VecEnvStepReturn:
-        obs, reward, done, info = self.venv.step_wait()
-        return obs, reward, done, info
+        ob = self.reset_model()
+        info = self.env.unwrapped._get_reset_info()
+
+        if self.render_mode == "human":
+            self.render()
+        return ob, info
 
     def reset_model(self):
-        for i, env in enumerate(self.venv.envs):
-            qpos = deepcopy(self.state["qpos"])
-            qvel = deepcopy(self.state["qvel"])
-            self.venv.envs[i].unwrapped.set_state(qpos, qvel)
-        observation = np.array([env.unwrapped._get_obs() for env in self.venv.envs])
+        qpos = self.state["qpos"]
+        qvel = self.state["qvel"]
+        self.env.unwrapped.set_state(qpos, qvel)
+        observation = self.env.unwrapped._get_obs()
         return observation
 
 
@@ -554,7 +566,7 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
 
             new_obs, rewards, dones, infos = env.step(clipped_actions)
             self.num_timesteps += env.num_envs
-            if flag and (n_steps in samples):
+            if flag and True:  # (n_steps in samples):
                 self.num_eval_timesteps += 1
                 pbar.update(1)
                 state = [{"qvel": env.unwrapped.data.qvel, "qpos": env.unwrapped.data.qpos} for env in env.envs]
@@ -565,14 +577,27 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
                     n_rollout_steps=ceil(self.n_eval_rollout_steps / self.n_eval_rollout_envs),
                 )
                 states_values_MC = eval_buffer.returns[eval_buffer.episode_starts.astype("bool")]
+                nb_full_episodes = eval_buffer.episode_starts.sum() - 1
                 states_values_MC = (
                     states_values_MC[: -eval_buffer.episode_starts.shape[1]]
                     if eval_buffer.episode_starts.ndim > 1
                     else states_values_MC[:-1]
                 )  # remove last one(s) as it is not a full episode
                 MC_values = np.concatenate((MC_values, states_values_MC), axis=None)
+
+                MC_episode_lengths = abs(
+                    np.diff(
+                        np.array(list(reversed(list(range(eval_buffer.size()))))).reshape(-1, 1)[
+                            eval_buffer.episode_starts.astype("bool")
+                        ]
+                    )
+                )
+
                 self.logger.record("value/value MC mean", np.mean(MC_values))
                 self.logger.record("value/value MC std", np.std(MC_values))
+                self.logger.record("MC/MC episode mean length", np.mean(MC_episode_lengths))
+                self.logger.record("MC/MC episode std length", np.std(MC_episode_lengths))
+                self.logger.record("MC/number of complete trajectories", nb_full_episodes)
                 predicted_values.append(values.detach().numpy())
                 value_error = (states_values_MC.mean(axis=0) - values.detach().numpy()) ** 2
                 value_errors.append(value_error)
@@ -745,7 +770,8 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         _last_episode_starts = np.ones((num_envs,), dtype=bool)
         n_steps = 0
         num_timesteps = 0
-        env, _last_obs = set_mujoco_state_and_get_obs(self.env_name, num_envs, states)
+        env = get_fixed_reset_state_env(self.env_name, num_envs, states)
+        _last_obs = env.reset()
         evaluation_rollout_buffer = EvaluationAvecRolloutBuffer(
             buffer_size=n_rollout_steps,
             observation_space=env.observation_space,
@@ -781,7 +807,6 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
                     # Otherwise, clip the actions to avoid out of bound error
                     # as we are sampling from an unbounded Gaussian distribution
                     clipped_actions = np.clip(actions, self.action_space.low, self.action_space.high)
-
             new_obs, rewards, dones, infos = env.step(clipped_actions)
             # TODO : investigate why no environment fail early?
             n_steps += 1
