@@ -566,7 +566,7 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
 
             new_obs, rewards, dones, infos = env.step(clipped_actions)
             self.num_timesteps += env.num_envs
-            if flag and True:  # (n_steps in samples):
+            if flag and (n_steps in samples):
                 self.num_eval_timesteps += 1
                 pbar.update(1)
                 state = [{"qvel": env.unwrapped.data.qvel, "qpos": env.unwrapped.data.qpos} for env in env.envs]
