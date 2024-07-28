@@ -584,19 +584,14 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
                     else states_values_MC[:-1]
                 )  # remove last one(s) as it is not a full episode
                 MC_values = np.concatenate((MC_values, states_values_MC), axis=None)
-
-                MC_episode_lengths = abs(
-                    np.diff(
-                        np.array(list(reversed(list(range(eval_buffer.size()))))).reshape(-1, 1)[
-                            eval_buffer.episode_starts.astype("bool")
-                        ]
-                    )
-                )
-
-                self.logger.record("value/value MC mean", np.mean(MC_values))
-                self.logger.record("value/value MC std", np.std(MC_values))
+                MC_episode_lengths = [
+                    len(x) + 1
+                    for x in "".join(eval_buffer.episode_starts.T.flatten().astype("int").astype("str")).split("1")[1:]
+                ]
                 self.logger.record("MC/MC episode mean length", np.mean(MC_episode_lengths))
                 self.logger.record("MC/MC episode std length", np.std(MC_episode_lengths))
+                self.logger.record("value/value MC mean", np.mean(MC_values))
+                self.logger.record("value/value MC std", np.std(MC_values))
                 self.logger.record("MC/number of complete trajectories", nb_full_episodes)
                 predicted_values.append(values.detach().numpy())
                 value_error = (states_values_MC.mean(axis=0) - values.detach().numpy()) ** 2
@@ -717,7 +712,9 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         assert self.env is not None
         TOTAL_UPDATES = total_timesteps // self.n_steps
         while self.num_timesteps < total_timesteps:
-            flag = ((self._n_updates / 10) % (int(0.10 * TOTAL_UPDATES)) == 0) and self._n_updates > 0
+            flag = (
+                ((self._n_updates / 10) % (int(0.10 * TOTAL_UPDATES)) == 0) and self._n_updates > 0
+            ) or self._n_updates == 10
 
             continue_training = self.collect_rollouts(
                 self.env, callback, self.rollout_buffer, n_rollout_steps=self.n_steps, flag=flag
