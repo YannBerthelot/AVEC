@@ -444,7 +444,7 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         _init_setup_model: bool = True,
         supported_action_spaces: Optional[Tuple[Type[spaces.Space], ...]] = None,
         n_eval_rollout_steps: int = int(1e5),
-        n_eval_rollout_envs: int = 1,
+        n_eval_rollout_envs: int = 32,
     ):
         super().__init__(
             policy=policy,
