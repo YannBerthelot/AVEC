@@ -2,7 +2,7 @@ import pdb
 import sys
 import time
 from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union
-
+from math import ceil
 import numpy as np
 import torch as th
 from torchmetrics.functional import pairwise_cosine_similarity
@@ -757,7 +757,7 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         env = make_vec_env(env_id=env_name, n_envs=num_envs)
         self._last_obs = env.reset()
         rollout_buffer = self.rollout_buffer_class(
-            n_steps,
+            ceil(n_steps / num_envs),
             self.observation_space,  # type: ignore[arg-type]
             self.action_space,
             device=self.device,
