@@ -13,6 +13,19 @@ from stable_baselines3.common.utils import explained_variance, get_schedule_fn
 
 SelfPPO = TypeVar("SelfPPO", bound="AVEC_PPO")
 
+import pdb
+
+
+def get_grad_from_net(net) -> list:
+    grads = []
+
+    for parameter in net.parameters():
+        grads.append(parameter.grad)
+    return grads
+
+
+from torchmetrics.functional import pairwise_cosine_similarity
+
 
 class AVEC_PPO(AvecOnPolicyAlgorithm):
     """
@@ -186,7 +199,7 @@ class AVEC_PPO(AvecOnPolicyAlgorithm):
 
             self.clip_range_vf = get_schedule_fn(self.clip_range_vf)
 
-    def train(self) -> None:
+    def train(self, update: bool = True) -> None:
         """
         Update policy using the currently gathered rollout buffer.
         """
@@ -249,10 +262,7 @@ class AVEC_PPO(AvecOnPolicyAlgorithm):
                 residual_errors = rollout_data.returns - values_pred
                 var = th.var(residual_errors, unbiased=False)
                 bias = th.mean(residual_errors)
-                value_loss = (1 / max(self.alpha, 1 - self.alpha)) * ((1 - self.alpha) * var + self.alpha * th.square(bias))
-                # assert th.isclose(
-                #     value_loss, F.mse_loss(rollout_data.returns, values_pred)
-                # ), f"{value_loss=} {F.mse_loss(rollout_data.returns, values_pred)}"
+                value_loss = (1 - self.alpha) * var + self.alpha * th.square(bias)
                 value_losses.append(value_loss.item())
 
                 # Entropy loss favor exploration
@@ -284,9 +294,13 @@ class AVEC_PPO(AvecOnPolicyAlgorithm):
                 # Optimization step
                 self.policy.optimizer.zero_grad()
                 loss.backward()
+
+                self.grads = get_grad_from_net(self.policy)
+
                 # Clip grad norm
-                th.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
-                self.policy.optimizer.step()
+                if update:
+                    th.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
+                    self.policy.optimizer.step()
 
             self._n_updates += 1
             if not continue_training:

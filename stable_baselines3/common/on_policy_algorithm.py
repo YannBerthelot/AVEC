@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union
 
 import numpy as np
 import torch as th
+from torchmetrics.functional import pairwise_cosine_similarity
 from gymnasium import spaces
 import gymnasium as gym
 from stable_baselines3.common.vec_env.base_vec_env import VecEnv, VecEnvStepReturn, VecEnvWrapper
@@ -24,6 +25,27 @@ SelfOnPolicyAlgorithm = TypeVar("SelfOnPolicyAlgorithm", bound="OnPolicyAlgorith
 from stable_baselines3.common.env_util import make_vec_env
 
 from gymnasium import Wrapper
+
+
+def compute_pairwise_from_grads(grads_1, grads_2) -> list:
+    similarities = []
+    for g_1, g_2 in zip(grads_1, grads_2):
+        if g_1.ndim == 1:
+            assert g_2.ndim == g_1.ndim
+            similarities.append(pairwise_cosine_similarity(g_1.reshape(1, -1), g_2.reshape(1, -1)).mean())
+        else:
+            similarities.append(pairwise_cosine_similarity(g_1, g_2).mean())
+
+    return similarities
+
+
+def get_pairwise_sim_from_nets_params(net_1, net_2) -> list:
+    similarities = []
+    for p_1, p_2 in zip(net_1, net_2):
+        pdb.set_trace()
+        similarities.append(pairwise_cosine_similarity(p_1.grads, p_2.grad))
+
+    return similarities
 
 
 def get_fixed_reset_state_env(env_name: str, num_envs: int, states):
@@ -162,6 +184,8 @@ class OnPolicyAlgorithm(BaseAlgorithm):
         self.max_grad_norm = max_grad_norm
         self.rollout_buffer_class = rollout_buffer_class
         self.rollout_buffer_kwargs = rollout_buffer_kwargs or {}
+        self.old_grads = None
+        self.grads = None
 
         if _init_setup_model:
             self._setup_model()
@@ -350,23 +374,40 @@ class OnPolicyAlgorithm(BaseAlgorithm):
         callback.on_training_start(locals(), globals())
 
         assert self.env is not None
-
+        N_GRADIENT_ROLLOUTS = 11
+        pairwise_similarities = []
         while self.num_timesteps < total_timesteps:
-            continue_training = self.collect_rollouts(self.env, callback, self.rollout_buffer, n_rollout_steps=self.n_steps)
+            for num_rollout in range(1, N_GRADIENT_ROLLOUTS + 1):
+                update = num_rollout == N_GRADIENT_ROLLOUTS
+                continue_training = self.collect_rollouts(
+                    self.env, callback, self.rollout_buffer, n_rollout_steps=self.n_steps, update=update
+                )
 
-            if not continue_training:
-                break
+                if not continue_training:
+                    break
 
-            iteration += 1
-            self._update_current_progress_remaining(self.num_timesteps, total_timesteps)
+                iteration += 1
+                self._update_current_progress_remaining(self.num_timesteps, total_timesteps)
 
-            # Display training infos
-            if log_interval is not None and iteration % log_interval == 0:
-                assert self.ep_info_buffer is not None
-                self._dump_logs(iteration)
+                # Display training infos
+                if log_interval is not None and iteration % log_interval == 0:
+                    assert self.ep_info_buffer is not None
+                    self._dump_logs(iteration)
 
-            self.train()
-
+                self.train(update=update)
+                if self.old_grads is not None:
+                    average_pairwise_cosine_sim = compute_pairwise_from_grads(self.grads, self.old_grads).mean()
+                    pairwise_similarities.append(average_pairwise_cosine_sim)
+                    self.old_grads = self.grads
+                if self.old_policy_params is not None:
+                    pairwise_sims = get_pairwise_sim_from_nets_params(self.policy.parameters(), self.old_policy_params)
+                    pdb.set_trace()
+                self.old_policy_params = deepcopy(self.policy.parameters())
+        assert len(pairwise_similarities == N_GRADIENT_ROLLOUTS)
+        if len(pairwise_similarities) > 0:
+            self.logger.record(
+                "gradients/average pairwise cosine sim", np.mean(pairwise_similarities), iteration=self.num_timesteps
+            )
         callback.on_training_end()
 
         return self
@@ -475,6 +516,9 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         self.n_eval_rollout_steps = n_eval_rollout_steps
         self.n_eval_rollout_envs = n_eval_rollout_envs
         self.num_eval_timesteps = 0
+        self.grads = None
+        self.old_grads = None
+        self.old_policy_params = None
         if _init_setup_model:
             self._setup_model()
 
@@ -506,7 +550,14 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         self.policy = self.policy.to(self.device)
 
     def collect_rollouts(
-        self, env: VecEnv, callback: BaseCallback, rollout_buffer: AvecRolloutBuffer, n_rollout_steps: int, flag: bool
+        self,
+        env: VecEnv,
+        callback: BaseCallback,
+        rollout_buffer: AvecRolloutBuffer,
+        n_rollout_steps: int,
+        flag: bool,
+        update: bool = True,
+        value_function_eval: bool = False,
     ) -> bool:
         """
         Collect experiences using the current policy and fill a ``RolloutBuffer``.
@@ -530,16 +581,18 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         # Sample new weights for the state dependent exploration
         if self.use_sde:
             self.policy.reset_noise(env.num_envs)
-
-        callback.on_rollout_start()
+        if update:
+            callback.on_rollout_start()
 
         N_SAMPLES = 100
-        if flag:
+        if flag and value_function_eval:
             pbar = tqdm(total=N_SAMPLES, desc="Collecting")
         samples = np.random.choice(n_rollout_steps, N_SAMPLES)
         value_errors = []
+        normalized_value_errors = []
         predicted_values = []
         MC_values = np.array([])
+        pbar = tqdm(total=n_rollout_steps, desc="Collecting")
         while n_steps < n_rollout_steps:
             if self.use_sde and self.sde_sample_freq > 0 and n_steps % self.sde_sample_freq == 0:
                 # Sample a new noise matrix
@@ -565,8 +618,9 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
                     clipped_actions = np.clip(actions, self.action_space.low, self.action_space.high)
 
             new_obs, rewards, dones, infos = env.step(clipped_actions)
-            self.num_timesteps += env.num_envs
-            if flag and (n_steps in samples):
+            if update:
+                self.num_timesteps += env.num_envs
+            if flag and (n_steps in samples) and value_function_eval:
                 self.num_eval_timesteps += 1
                 pbar.update(1)
                 state = [{"qvel": env.unwrapped.data.qvel, "qpos": env.unwrapped.data.qpos} for env in env.envs]
@@ -588,27 +642,36 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
                     len(x) + 1
                     for x in "".join(eval_buffer.episode_starts.T.flatten().astype("int").astype("str")).split("1")[1:]
                 ]
-                self.logger.record("MC/MC episode mean length", np.mean(MC_episode_lengths))
-                self.logger.record("MC/MC episode std length", np.std(MC_episode_lengths))
-                self.logger.record("value/value MC mean", np.mean(MC_values))
-                self.logger.record("value/value MC std", np.std(MC_values))
-                self.logger.record("MC/number of complete trajectories", nb_full_episodes)
                 predicted_values.append(values.detach().numpy())
                 value_error = (states_values_MC.mean(axis=0) - values.detach().numpy()) ** 2
                 value_errors.append(value_error)
-                self.logger.record("value/value std ", np.std(predicted_values))
-                self.logger.record("value/value mean ", np.mean(predicted_values))
-                self.logger.record("errors/error std ", np.std(value_errors))
-                self.logger.record("errors/error mean ", np.mean(value_errors))
-                self.logger.record("value/eval step ", self.num_eval_timesteps)
+                normalized_value_errors.append(value_error / (MC_values.mean(axis=0) ** 2))
+                self.logger.record("MC/MC episode mean length", np.mean(MC_episode_lengths))
+                self.logger.record("MC/MC episode std length", np.std(MC_episode_lengths))
+                self.logger.record("MC/number of complete trajectories", nb_full_episodes)
+                self.logger.record("value/value MC mean", np.mean(MC_values))
+                self.logger.record("value/value MC std", np.std(MC_values))
+                self.logger.record("value/value std (variance)", np.std(predicted_values))
+                self.logger.record(
+                    "value/normalized value std (variance)", np.std(predicted_values) / np.mean(predicted_values)
+                )
+                self.logger.record("value/value mean", np.mean(predicted_values))
+                self.logger.record("value/eval step", self.num_eval_timesteps)
+                self.logger.record("errors/error std", np.std(value_errors))
+                self.logger.record("errors/error mean (bias)", np.mean(value_errors))
+                self.logger.record("errors/normalized error mean (bias)", np.mean(normalized_value_errors))
+                self.logger.record("errors/normalized error std", np.std(normalized_value_errors))
                 self.logger.dump(step=self.num_timesteps)
+
             # Give access to local variables
-            callback.update_locals(locals())
-            if not callback.on_step():
-                return False
+            if update:
+                callback.update_locals(locals())
+                if not callback.on_step():
+                    return False
 
             self._update_info_buffer(infos, dones)
-            n_steps += 1
+            n_steps += env.num_envs
+            pbar.update(env.num_envs)
 
             if isinstance(self.action_space, spaces.Discrete):
                 # Reshape in case of discrete action
@@ -645,17 +708,19 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
             values = self.policy.predict_values(obs_as_tensor(new_obs, self.device))  # type: ignore[arg-type]
 
         rollout_buffer.compute_returns_and_advantage(last_values=values, dones=dones)
-        if flag:
+        if flag and value_function_eval:
+            self.logger.record("errors/normalized value approximation error mean", np.mean(normalized_value_errors))
+            self.logger.record("errors/normalized value approximation error std", np.std(normalized_value_errors))
+            self.logger.record("errors/value estimation error mean", np.mean(rollout_buffer.deltas))
             self.logger.record("errors/value approximation error mean", np.mean(value_errors))
             self.logger.record("errors/value approximation error std", np.std(value_errors))
-            self.logger.record("errors/value estimation error mean", np.mean(rollout_buffer.deltas))
             self.logger.record("errors/value estimation error std", np.std(rollout_buffer.deltas))
             error_difference = np.mean((np.mean(value_errors) - np.mean(rollout_buffer.deltas)) ** 2)
             self.logger.record("errors/errors difference", error_difference)
+        if update:
+            callback.update_locals(locals())
 
-        callback.update_locals(locals())
-
-        callback.on_rollout_end()
+            callback.on_rollout_end()
 
         return True
 
@@ -688,6 +753,31 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
             self.logger.record("rollout/success_rate", safe_mean(self.ep_success_buffer))
         self.logger.dump(step=self.num_timesteps)
 
+    def get_true_grads_from_policy(self, env_name: str, num_envs: int = 32, n_steps: int = int(1e7)):
+        env = make_vec_env(env_id=env_name, n_envs=num_envs)
+        self._last_obs = env.reset()
+        rollout_buffer = self.rollout_buffer_class(
+            n_steps,
+            self.observation_space,  # type: ignore[arg-type]
+            self.action_space,
+            device=self.device,
+            gamma=self.gamma,
+            gae_lambda=self.gae_lambda,
+            n_envs=num_envs,
+            **self.rollout_buffer_kwargs,
+        )
+        self.collect_rollouts(
+            env,
+            None,
+            rollout_buffer,
+            n_rollout_steps=n_steps,
+            flag=False,
+            update=False,
+            value_function_eval=False,
+        )
+        self.train(update=False)
+        return deepcopy(self.grads)
+
     def learn(
         self,
         total_timesteps: int,
@@ -711,28 +801,64 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
 
         assert self.env is not None
         TOTAL_UPDATES = total_timesteps // self.n_steps
+        N_GRADIENT_ROLLOUTS = 10
+        number_of_flags = 30
+        VALUE_FUNCTION_EVAL = False
         while self.num_timesteps < total_timesteps:
-            flag = (
-                ((self._n_updates / 10) % (int(0.10 * TOTAL_UPDATES)) == 0) and self._n_updates > 0
-            ) or self._n_updates == 10
+            flag = ((self._n_updates / 10) % (int((1 / number_of_flags) * TOTAL_UPDATES)) == 0) and self._n_updates > 0
+            # print(f"{flag=}, {self._n_updates=} {int((1 / number_of_flags) * TOTAL_UPDATES)}")
+            pairwise_similarities = []
+            self.old_grads = None
+            self.old_policy_params = None
+            n_iterations = 2 if (VALUE_FUNCTION_EVAL or not (flag)) else N_GRADIENT_ROLLOUTS + 1
+            for num_rollout in range(1, n_iterations):
+                update = num_rollout == n_iterations - 1
+                if flag:
+                    old_last_obs = deepcopy(self._last_obs)
+                    old_parameters = deepcopy(list(self.policy.parameters()))
+                    true_grads = self.get_true_grads_from_policy(env_name=self.env_name)
+                    for param, old_param in zip(self.policy.parameters(), old_parameters):
+                        assert th.equal(param, old_param)
+                    self._last_obs = old_last_obs
+                continue_training = self.collect_rollouts(
+                    self.env,
+                    callback,
+                    self.rollout_buffer,
+                    n_rollout_steps=self.n_steps,
+                    flag=flag,
+                    update=update,
+                    value_function_eval=VALUE_FUNCTION_EVAL,
+                )
 
-            continue_training = self.collect_rollouts(
-                self.env, callback, self.rollout_buffer, n_rollout_steps=self.n_steps, flag=flag
-            )
+                if not continue_training:
+                    break
 
-            if not continue_training:
-                break
+                iteration += 1
+                self._update_current_progress_remaining(self.num_timesteps, total_timesteps)
 
-            iteration += 1
-            self._update_current_progress_remaining(self.num_timesteps, total_timesteps)
-
-            # Display training infos
-            if log_interval is not None and iteration % log_interval == 0:
-                assert self.ep_info_buffer is not None
-                self._dump_logs(iteration)
-
-            self.train()
-
+                # Display training infos
+                if log_interval is not None and iteration % log_interval == 0:
+                    assert self.ep_info_buffer is not None
+                    self._dump_logs(iteration)
+                old_parameters = deepcopy(list(self.policy.parameters()))
+                self.train(update=update)
+                if not (update):
+                    for param, old_param in zip(self.policy.parameters(), old_parameters):
+                        assert th.equal(param, old_param)
+                if update:
+                    for param, old_param in zip(self.policy.parameters(), old_parameters):
+                        assert not (th.equal(param, old_param))
+                    if flag:
+                        true_gradient_pairwise_cosine_sim = compute_pairwise_from_grads(self.grads, true_grads)
+                        average_true_gradient_pairwise_cosine_sim = np.mean(true_gradient_pairwise_cosine_sim)
+                if self.old_grads is not None and flag:
+                    pairwise_cosine_sim = compute_pairwise_from_grads(self.grads, self.old_grads)
+                    pairwise_similarities.append(np.mean(pairwise_cosine_sim))
+                self.old_grads = deepcopy(self.grads)
+            if flag:
+                assert len(pairwise_similarities) == N_GRADIENT_ROLLOUTS - 1, f"{len(pairwise_similarities)}"
+                self.logger.record("gradients/average pairwise cosine sim", np.mean(pairwise_similarities))
+                self.logger.record("gradients/convergence to the true gradients", average_true_gradient_pairwise_cosine_sim)
         callback.on_training_end()
 
         return self
