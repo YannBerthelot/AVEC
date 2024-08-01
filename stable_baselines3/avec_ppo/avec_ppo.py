@@ -199,7 +199,7 @@ class AVEC_PPO(AvecOnPolicyAlgorithm):
 
             self.clip_range_vf = get_schedule_fn(self.clip_range_vf)
 
-    def train(self, update: bool = True) -> None:
+    def train(self, update: bool = True, n_epochs=None) -> None:
         """
         Update policy using the currently gathered rollout buffer.
         """
@@ -219,7 +219,11 @@ class AVEC_PPO(AvecOnPolicyAlgorithm):
 
         continue_training = True
         # train for n_epochs epochs
-        for epoch in range(self.n_epochs):
+        if n_epochs is not None:
+            _n_epochs = n_epochs + 1
+        else:
+            _n_epochs = self.n_epochs
+        for epoch in range(_n_epochs):
             approx_kl_divs = []
             # Do a complete pass on the rollout buffer
             for rollout_data in self.rollout_buffer.get(self.batch_size):
@@ -301,8 +305,8 @@ class AVEC_PPO(AvecOnPolicyAlgorithm):
                 if update:
                     th.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
                     self.policy.optimizer.step()
-
-            self._n_updates += 1
+            if update:
+                self._n_updates += 1
             if not continue_training:
                 break
 
