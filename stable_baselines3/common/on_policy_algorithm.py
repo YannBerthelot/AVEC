@@ -815,11 +815,14 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
                 update = num_rollout == n_iterations - 1
                 if flag:
                     old_last_obs = deepcopy(self._last_obs)
+                    old_episode_starts = deepcopy(self._last_episode_starts)
                     old_parameters = deepcopy(list(self.policy.parameters()))
                     true_grads = self.get_true_grads_from_policy(env_name=self.env_name)
                     for param, old_param in zip(self.policy.parameters(), old_parameters):
                         assert th.equal(param, old_param)
                     self._last_obs = old_last_obs
+                    self._last_episode_starts = old_episode_starts
+
                 continue_training = self.collect_rollouts(
                     self.env,
                     callback,
