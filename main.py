@@ -109,6 +109,6 @@ if __name__ == "__main__":
         agent = AVEC_PPO
         hyperparams["alpha"] = alpha
         hyperparams["correction"] = True
-    model = agent(policy, env, tensorboard_log=f"runs/{run.id}", **hyperparams, env_name=env_name)
+    model = agent(policy, env, tensorboard_log=f"runs/{run.id}", **hyperparams, env_name=env_name, seed=seed)
     model.learn(total_timesteps=n_timesteps, callback=WandbCallback())
     run.finish()

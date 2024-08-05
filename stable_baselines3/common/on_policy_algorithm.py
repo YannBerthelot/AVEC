@@ -1,8 +1,9 @@
+import os
 import pdb
 import sys
 import time
 from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union
-from math import ceil
+from math import ceil, floor
 import numpy as np
 import torch as th
 from torchmetrics.functional import pairwise_cosine_similarity
@@ -26,6 +27,8 @@ from stable_baselines3.common.env_util import make_vec_env
 
 from gymnasium import Wrapper
 
+GRADS_FOLDER = "grads"
+
 
 def compute_pairwise_from_grads(grads_1, grads_2) -> list:
     similarities = []
@@ -46,6 +49,19 @@ def get_pairwise_sim_from_nets_params(net_1, net_2) -> list:
         similarities.append(pairwise_cosine_similarity(p_1.grads, p_2.grad))
 
     return similarities
+
+
+import pickle
+
+
+def save_to_pickle(obj, filename):
+    with open(f"{filename}.pkl", "wb") as handle:
+        pickle.dump(obj, handle, protocol=pickle.HIGHEST_PROTOCOL)
+
+
+def read_from_pickle(filename):
+    with open(f"{filename}.pkl", "rb") as handle:
+        return pickle.load(handle)
 
 
 def get_fixed_reset_state_env(env_name: str, num_envs: int, states):
@@ -753,7 +769,7 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
             self.logger.record("rollout/success_rate", safe_mean(self.ep_success_buffer))
         self.logger.dump(step=self.num_timesteps)
 
-    def get_true_grads_from_policy(self, env_name: str, num_envs: int = 32, n_steps: int = int(1e7)):
+    def get_true_grads_from_policy(self, env_name: str, num_envs: int = 32, n_steps: int = int(1e6)):
         env = make_vec_env(env_id=env_name, n_envs=num_envs)
         self._last_obs = env.reset()
         rollout_buffer = self.rollout_buffer_class(
@@ -804,9 +820,17 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         N_GRADIENT_ROLLOUTS = 10
         number_of_flags = 10
         VALUE_FUNCTION_EVAL = False
+        n_flags = 1
         while self.num_timesteps < total_timesteps:
-            flag = ((self._n_updates / 10) % (int((1 / number_of_flags) * TOTAL_UPDATES)) == 0) and self._n_updates > 0
-            # print(f"{flag=}, {self._n_updates=} {int((1 / number_of_flags) * TOTAL_UPDATES)}")
+            flag = (
+                (self._n_updates / self.n_epochs) % (int((1 / number_of_flags) * TOTAL_UPDATES)) == 0
+            ) and self._n_updates > 0
+
+            flag = (
+                (self.num_timesteps // (int((n_flags / number_of_flags) * total_timesteps)) > 0) and self.num_timesteps > 0
+            ) or (self._n_updates / self.n_epochs) == (TOTAL_UPDATES - 1)
+            if flag:
+                n_flags += 1
             pairwise_similarities = []
             self.old_grads = None
             self.old_policy_params = None
@@ -814,12 +838,20 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
 
             for num_rollout in range(1, n_iterations):
                 update = num_rollout == n_iterations - 1
-                print(flag, update, self._n_updates / 10, int((1 / number_of_flags) * TOTAL_UPDATES))
                 if flag:
+
                     old_last_obs = deepcopy(self._last_obs)
                     old_episode_starts = deepcopy(self._last_episode_starts)
 
-                    true_grads = self.get_true_grads_from_policy(env_name=self.env_name)
+                    os.makedirs(GRADS_FOLDER, exist_ok=True)
+                    algo_name = "CORRECTED_AVEC_PPO" if self.correction else "AVEC_PPO"
+                    training_frac = int((n_flags - 1) * 100 / number_of_flags)
+                    filename = f"{self.env_name} {algo_name} {self.alpha} {self.seed} {training_frac}%"
+                    if filename not in os.listdir(GRADS_FOLDER):
+                        true_grads = self.get_true_grads_from_policy(env_name=self.env_name)
+                        save_to_pickle(true_grads, os.path.join(GRADS_FOLDER, filename))
+                    else:
+                        true_grads = read_from_pickle(filename)
 
                     self._last_obs = old_last_obs
                     self._last_episode_starts = old_episode_starts
