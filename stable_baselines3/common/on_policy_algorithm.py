@@ -1,4 +1,5 @@
 import os
+import pickle
 import pdb
 import sys
 import time
@@ -7,7 +8,7 @@ from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union
 from math import ceil, floor
 import numpy as np
 import torch as th
-from torchmetrics.functional import pairwise_cosine_similarity
+from sklearn.metrics.pairwise import cosine_similarity
 from gymnasium import spaces
 import gymnasium as gym
 import wandb.errors
@@ -30,6 +31,9 @@ from stable_baselines3.common.env_util import make_vec_env
 from gymnasium import Wrapper
 
 GRADS_FOLDER = "grads"
+N_GRADIENT_ROLLOUTS = 10
+VALUE_FUNCTION_EVAL = False
+number_of_flags = 10
 
 
 def compute_pairwise_from_grads(grads_1, grads_2) -> list:
@@ -37,23 +41,10 @@ def compute_pairwise_from_grads(grads_1, grads_2) -> list:
     for g_1, g_2 in zip(grads_1, grads_2):
         if g_1.ndim == 1:
             assert g_2.ndim == g_1.ndim
-            similarities.append(pairwise_cosine_similarity(g_1.reshape(1, -1), g_2.reshape(1, -1)).mean())
+            similarities.append(cosine_similarity(g_1.reshape(1, -1), g_2.reshape(1, -1)).mean())
         else:
-            similarities.append(pairwise_cosine_similarity(g_1, g_2).mean())
-
+            similarities.append(cosine_similarity(g_1, g_2).mean())
     return similarities
-
-
-def get_pairwise_sim_from_nets_params(net_1, net_2) -> list:
-    similarities = []
-    for p_1, p_2 in zip(net_1, net_2):
-        pdb.set_trace()
-        similarities.append(pairwise_cosine_similarity(p_1.grads, p_2.grad))
-
-    return similarities
-
-
-import pickle
 
 
 def save_to_pickle(obj, filename):
@@ -593,7 +584,6 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         assert self._last_obs is not None, "No previous observation was provided"
         # Switch to eval mode (this affects batch norm / dropout)
         self.policy.set_training_mode(False)
-        errors = []
         n_steps = 0
         rollout_buffer.reset()
         # Sample new weights for the state dependent exploration
@@ -686,8 +676,8 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
                 callback.update_locals(locals())
                 if not callback.on_step():
                     return False
-
-            self._update_info_buffer(infos, dones)
+            if update:
+                self._update_info_buffer(infos, dones)
             n_steps += env.num_envs
             # pbar.update(env.num_envs)
 
@@ -735,9 +725,9 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
             self.logger.record("errors/value estimation error std", np.std(rollout_buffer.deltas))
             error_difference = np.mean((np.mean(value_errors) - np.mean(rollout_buffer.deltas)) ** 2)
             self.logger.record("errors/errors difference", error_difference)
+
         if update:
             callback.update_locals(locals())
-
             callback.on_rollout_end()
 
         return True
@@ -800,7 +790,6 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         algo_name = "CORRECTED_AVEC_PPO" if self.correction else "AVEC_PPO"
         for training_frac in range(1, number_of_flags + 1):
             filename = f"{self.env_name}_{algo_name}_{self.alpha}_{self.seed}_{training_frac*10}"
-            print(filename)
             try:
                 artifact = wandb.use_artifact(f"{filename}:latest")
                 datadir = artifact.download()
@@ -808,6 +797,30 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
 
             except:  # wandb.errors.ArtifactNotLoggedError: somehow this does not exist despite being in the doc
                 continue
+
+    def compute_true_grads(self) -> list:
+        old_last_obs = deepcopy(self._last_obs)
+        old_episode_starts = deepcopy(self._last_episode_starts)
+        true_grads = self.get_true_grads_from_policy(env_name=self.env_name)
+        self._last_obs = old_last_obs
+        self._last_episode_starts = old_episode_starts
+        return true_grads
+
+    def compute_or_load_true_grads(self, n_flags: int, number_of_flags: int) -> list:
+        os.makedirs(GRADS_FOLDER, exist_ok=True)
+        training_frac = int((n_flags - 1) * 100 / number_of_flags)
+        algo_name = "CORRECTED_AVEC_PPO" if self.correction else "AVEC_PPO"
+        filename = f"{self.env_name}_{algo_name}_{self.alpha}_{self.seed}_{training_frac}"
+        if filename not in os.listdir(GRADS_FOLDER):
+            true_grads = self.compute_true_grads()
+            grads_path = os.path.join(GRADS_FOLDER, filename)
+            save_to_pickle(true_grads, grads_path)
+            wandb.log_artifact(
+                artifact_or_path=grads_path + ".pkl", name=filename, type="dataset"
+            )  # Logs the artifact version "my_data" as a dataset with data from dataset.h5
+        else:
+            true_grads = read_from_pickle(filename)
+        return true_grads
 
     def learn(
         self,
@@ -831,44 +844,23 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         callback.on_training_start(locals(), globals())
 
         assert self.env is not None
-        TOTAL_UPDATES = total_timesteps // self.n_steps
-        N_GRADIENT_ROLLOUTS = 10
-        number_of_flags = 10
+
         self.load_artifacts(number_of_flags)
-        VALUE_FUNCTION_EVAL = False
+
+        TOTAL_UPDATES = total_timesteps // self.n_steps
+
         n_flags = 1
         while self.num_timesteps < total_timesteps:
             flag = (
                 (self.num_timesteps // (int((n_flags / number_of_flags) * total_timesteps)) > 0) and self.num_timesteps > 0
             ) or (self._n_updates / self.n_epochs) == (TOTAL_UPDATES - 1)
-            if flag:
-                n_flags += 1
             pairwise_similarities = []
             self.old_grads = None
             self.old_policy_params = None
             n_iterations = 2 if (VALUE_FUNCTION_EVAL or not (flag)) else N_GRADIENT_ROLLOUTS + 1
-
-            # Compute true grad
             if flag:
-                old_last_obs = deepcopy(self._last_obs)
-                old_episode_starts = deepcopy(self._last_episode_starts)
-                os.makedirs(GRADS_FOLDER, exist_ok=True)
-
-                training_frac = int((n_flags - 1) * 100 / number_of_flags)
-                algo_name = "CORRECTED_AVEC_PPO" if self.correction else "AVEC_PPO"
-                filename = f"{self.env_name}_{algo_name}_{self.alpha}_{self.seed}_{training_frac}"
-                if filename not in os.listdir(GRADS_FOLDER):
-                    true_grads = self.get_true_grads_from_policy(env_name=self.env_name)
-                    grads_path = os.path.join(GRADS_FOLDER, filename)
-                    save_to_pickle(true_grads, grads_path)
-                    wandb.log_artifact(
-                        artifact_or_path=grads_path + ".pkl", name=filename, type="dataset"
-                    )  # Logs the artifact version "my_data" as a dataset with data from dataset.h5
-                else:
-                    true_grads = read_from_pickle(filename)
-
-                self._last_obs = old_last_obs
-                self._last_episode_starts = old_episode_starts
+                n_flags += 1
+                true_grads = self.compute_or_load_true_grads(n_flags, number_of_flags)
 
             for num_rollout in range(1, n_iterations):
                 update = num_rollout == n_iterations - 1
@@ -884,9 +876,9 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
 
                 if not continue_training:
                     break
-
-                iteration += 1
-                self._update_current_progress_remaining(self.num_timesteps, total_timesteps)
+                if update:
+                    iteration += 1
+                    self._update_current_progress_remaining(self.num_timesteps, total_timesteps)
 
                 # Display training infos
                 if log_interval is not None and iteration % log_interval == 0:
@@ -902,12 +894,12 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
                     average_true_gradient_pairwise_cosine_sim = np.mean(true_gradient_pairwise_cosine_sim)
                 if flag and update:
                     assert len(pairwise_similarities) == N_GRADIENT_ROLLOUTS - 1, f"{len(pairwise_similarities)}"
-                    self.logger.record("fraction of training steps", training_frac)
+                    self.logger.record("fraction of training steps", int((n_flags - 1) * 100 / number_of_flags))
                     self.logger.record("gradients/average pairwise cosine sim", np.mean(pairwise_similarities))
                     self.logger.record(
                         "gradients/convergence to the true gradients", average_true_gradient_pairwise_cosine_sim
                     )
-                    self._dump_logs(iteration)
+                    self.logger.dump(step=self.num_timesteps)
                 self.train(update=update)
                 if flag:
                     self.old_grads = deepcopy(self.grads)
