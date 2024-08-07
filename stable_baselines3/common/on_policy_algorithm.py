@@ -913,7 +913,7 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
                     assert len(pairwise_similarities) == N_GRADIENT_ROLLOUTS - 1, f"{len(pairwise_similarities)}"
                     self.logger.record("fraction of training steps", int((n_flags - 1) * 100 / number_of_flags))
                     self.logger.record("gradients/average pairwise cosine sim", np.mean(pairwise_similarities))
-                    self.logger.record("gradients/avec average pairwise cosine sim", np.mean(pairwise_similarities))
+                    self.logger.record("gradients/avec average pairwise cosine sim", np.mean(avec_pairwise_similarities))
                     self.logger.record(
                         "gradients/convergence to the true gradients", average_true_gradient_pairwise_cosine_sim
                     )
