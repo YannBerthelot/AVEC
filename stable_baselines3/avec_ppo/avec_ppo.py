@@ -199,10 +199,11 @@ class AVEC_PPO(AvecOnPolicyAlgorithm):
 
             self.clip_range_vf = get_schedule_fn(self.clip_range_vf)
 
-    def train(self, update: bool = True, n_epochs=None) -> None:
+    def train(self, update: bool = True, n_epochs=None, alpha=None) -> None:
         """
         Update policy using the currently gathered rollout buffer.
         """
+        alpha = self.alpha if alpha is None else alpha
         # Switch to train mode (this affects batch norm / dropout)
         self.policy.set_training_mode(True)
         # Update optimizer learning rate
@@ -266,7 +267,7 @@ class AVEC_PPO(AvecOnPolicyAlgorithm):
                 residual_errors = rollout_data.returns - values_pred
                 var = th.var(residual_errors, unbiased=False)
                 bias = th.mean(residual_errors)
-                value_loss = (1 - self.alpha) * var + self.alpha * th.square(bias)
+                value_loss = (1 - alpha) * var + alpha * th.square(bias)
                 value_losses.append(value_loss.item())
 
                 # Entropy loss favor exploration
