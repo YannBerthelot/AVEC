@@ -890,9 +890,9 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
                     assert self.ep_info_buffer is not None
                     self._dump_logs(iteration)
                 if flag:
-                    self.train(update=False, epoch=1)
+                    self.train(update=False, n_epochs=1)
                     grads = deepcopy(self.grads)
-                    self.train(update=False, epoch=1, alpha=0.0)
+                    self.train(update=False, n_epochs=1, alpha=0.0)
                     avec_grads = deepcopy(self.grads)
                 if self.old_grads is not None and flag:
                     assert self.old_avec_grads is not None
