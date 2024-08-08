@@ -27,8 +27,15 @@ def read_hyperparams_data(file_name):
 
 def parse_hyperparams(env_name, hyperparams_data):
     hyperparams = hyperparams_data[env_name]
+    for key, value in hyperparams.items():
+        if isinstance(value, str):
+            if "lin" in value:
+                true_val = float(value.split("_")[1])
+                hyperparams[key] = lambda x: x * true_val
     if "normalize" in hyperparams.keys():
         normalize = hyperparams.pop("normalize")
+    else:
+        normalize = False
     if "n_envs" in hyperparams.keys():
         n_envs = hyperparams.pop("n_envs")
     else:
@@ -39,11 +46,13 @@ def parse_hyperparams(env_name, hyperparams_data):
         policy = "MlpPolicy"
     if "n_timesteps" in hyperparams.keys():
         n_timesteps = hyperparams.pop("n_timesteps")
+    else:
+        n_timesteps = None
     if "policy_kwargs" in hyperparams.keys():
         if isinstance(hyperparams["policy_kwargs"], str):
             hyperparams["policy_kwargs"] = eval(hyperparams["policy_kwargs"])
             assert isinstance(hyperparams["policy_kwargs"], dict)
-    return n_envs, policy, hyperparams, normalize
+    return n_envs, policy, hyperparams, normalize, n_timesteps
 
 
 if __name__ == "__main__":
@@ -53,7 +62,7 @@ if __name__ == "__main__":
     n_steps_factor = float(sys.argv[4])
     network_size_factor = float(sys.argv[5])
     alpha = float(sys.argv[6])
-    n_timesteps = int(eval(sys.argv[7]))
+    n_timesteps_user = int(eval(sys.argv[7]))
     N_EVAL_TIMESTEPS = int(eval(sys.argv[8]))
     N_SAMPLES_MC = int(sys.argv[9])
     N_EVAL_ENVS = int(sys.argv[10])
@@ -64,7 +73,7 @@ if __name__ == "__main__":
     dir_path = os.path.dirname(os.path.realpath(__file__))
     # hyperparams_data = read_hyperparams_data("/home/yberthel/AVEC/ppo.yml")
     hyperparams_data = read_hyperparams_data(os.path.join(dir_path, "ppo.yml"))
-    n_envs, policy, hyperparams, normalize = parse_hyperparams(
+    n_envs, policy, hyperparams, normalize, n_timesteps = parse_hyperparams(
         env_name, hyperparams_data
     )  # TODO : change batch_size with batch_factor
     if "batch_size" in hyperparams.keys():
@@ -87,7 +96,7 @@ if __name__ == "__main__":
         )
 
     run = wandb.init(
-        project="avec experiments ranking",
+        project="avec experiments ranking 2",
         sync_tensorboard=True,
         config={
             "agent": "PPO",
@@ -123,5 +132,5 @@ if __name__ == "__main__":
         n_samples_MC=N_SAMPLES_MC,
         n_eval_envs=N_EVAL_ENVS,
     )
-    model.learn(total_timesteps=n_timesteps, callback=WandbCallback())
+    model.learn(total_timesteps=n_timesteps if n_timesteps is not None else n_timesteps_user, callback=WandbCallback())
     run.finish()

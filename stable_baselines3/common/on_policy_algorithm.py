@@ -32,6 +32,7 @@ from stable_baselines3.common.env_util import make_vec_env
 from gymnasium import Wrapper
 
 GRADS_FOLDER = "grads"
+VALUE_FOLDER = "value"
 N_GRADIENT_ROLLOUTS = 10
 VALUE_FUNCTION_EVAL = True
 GRAD_EVAL = False
@@ -49,6 +50,15 @@ def compute_pairwise_from_grads(grads_1, grads_2) -> list:
     return similarities
 
 
+def get_state(env):
+    is_mujoco = "data" in dir(env.unwrapped)
+    if is_mujoco:
+        state = [{"qvel": env.unwrapped.data.qvel, "qpos": env.unwrapped.data.qpos} for env in env.envs]
+    else:
+        state = [env.unwrapped.state for env in env.envs]
+    return state
+
+
 def save_to_pickle(obj, filename):
     with open(f"{filename}.pkl", "wb") as handle:
         pickle.dump(obj, handle, protocol=pickle.HIGHEST_PROTOCOL)
@@ -59,20 +69,61 @@ def read_from_pickle(filename):
         return pickle.load(handle)
 
 
+MUJOCO_NAMES = [
+    "Ant",
+    "HalfCheetah",
+    "Hopper",
+    "Humanoid",
+    "HumanoidStandup",
+    "Reacher",
+    "Walker2D",
+    "Swimmer",
+    "InvertedDoublePendulum",
+    "InvertedPendulum",
+    "Pusher",
+]
+
+
 def get_fixed_reset_state_env(env_name: str, num_envs: int, states):
     # env = gym.make(env_name, max_episode_steps=int(1e3))
-    env = make_vec_env(env_id=env_name, n_envs=num_envs, wrapper_class=MujocoResetWrapper, wrapper_kwargs={"state": states})
+    is_mujoco = env_name.split("-")[0] in MUJOCO_NAMES
+    if is_mujoco:
+        wrapper = MujocoResetWrapper
+    else:
+        wrapper = ClassicControlWrapper
+    env = make_vec_env(env_id=env_name, n_envs=num_envs, wrapper_class=wrapper, wrapper_kwargs={"state": states})
 
     # env = make_vec_env(MujocoResetWrapper, n_envs=num_envs, env_kwargs={"env": env, "state": states})
     return env
 
 
-def get_state_from_mujoco(env):
-    return env.unwrapped.data
-
-
 import mujoco
 from gymnasium import Env
+
+
+class ClassicControlWrapper(Wrapper):
+    def __init__(self, env: Env, state):
+        super().__init__(env)
+        self.state = state
+
+    def reset(
+        self,
+        *,
+        seed: Optional[int] = None,
+        options: Optional[dict] = None,
+    ):
+        self.env.reset(seed=seed)
+
+        self.env.unwrapped.state = self.state
+        self.steps_beyond_terminated = None
+
+        if self.render_mode == "human":
+            self.render()
+        if "_get_obs" in dir(self.env.unwrapped):
+            obs = self.env.unwrapped._get_obs()
+        else:
+            obs = np.array(self.state, dtype=np.float32)
+        return obs, {}
 
 
 class MujocoResetWrapper(Wrapper):
@@ -195,8 +246,6 @@ class OnPolicyAlgorithm(BaseAlgorithm):
         self.max_grad_norm = max_grad_norm
         self.rollout_buffer_class = rollout_buffer_class
         self.rollout_buffer_kwargs = rollout_buffer_kwargs or {}
-        self.old_grads = None
-        self.grads = None
 
         if _init_setup_model:
             self._setup_model()
@@ -210,7 +259,6 @@ class OnPolicyAlgorithm(BaseAlgorithm):
                 self.rollout_buffer_class = DictRolloutBuffer
             else:
                 self.rollout_buffer_class = RolloutBuffer
-
         self.rollout_buffer = self.rollout_buffer_class(
             self.n_steps,
             self.observation_space,  # type: ignore[arg-type]
@@ -298,7 +346,7 @@ class OnPolicyAlgorithm(BaseAlgorithm):
                 # Reshape in case of discrete action
                 actions = actions.reshape(-1, 1)
 
-            # Handle timeout by bootstraping with value function
+            # Handle timeout by bootstrapping with value function
             # see GitHub issue #633
             for idx, done in enumerate(dones):
                 if (
@@ -385,39 +433,23 @@ class OnPolicyAlgorithm(BaseAlgorithm):
         callback.on_training_start(locals(), globals())
 
         assert self.env is not None
-        N_GRADIENT_ROLLOUTS = 11
-        pairwise_similarities = []
+
         while self.num_timesteps < total_timesteps:
-            for num_rollout in range(1, N_GRADIENT_ROLLOUTS + 1):
-                update = num_rollout == N_GRADIENT_ROLLOUTS
-                continue_training = self.collect_rollouts(
-                    self.env, callback, self.rollout_buffer, n_rollout_steps=self.n_steps, update=update
-                )
+            continue_training = self.collect_rollouts(self.env, callback, self.rollout_buffer, n_rollout_steps=self.n_steps)
 
-                if not continue_training:
-                    break
+            if not continue_training:
+                break
 
-                iteration += 1
-                self._update_current_progress_remaining(self.num_timesteps, total_timesteps)
+            iteration += 1
+            self._update_current_progress_remaining(self.num_timesteps, total_timesteps)
 
-                # Display training infos
-                if log_interval is not None and iteration % log_interval == 0:
-                    assert self.ep_info_buffer is not None
-                    self._dump_logs(iteration)
+            # Display training infos
+            if log_interval is not None and iteration % log_interval == 0:
+                assert self.ep_info_buffer is not None
+                self._dump_logs(iteration)
 
-                self.train(update=update)
-                if self.old_grads is not None:
-                    average_pairwise_cosine_sim = compute_pairwise_from_grads(self.grads, self.old_grads).mean()
-                    pairwise_similarities.append(average_pairwise_cosine_sim)
-                    self.old_grads = self.grads
-                if self.old_policy_params is not None:
-                    pairwise_sims = get_pairwise_sim_from_nets_params(self.policy.parameters(), self.old_policy_params)
-                self.old_policy_params = deepcopy(self.policy.parameters())
-        assert len(pairwise_similarities == N_GRADIENT_ROLLOUTS)
-        if len(pairwise_similarities) > 0:
-            self.logger.record(
-                "gradients/average pairwise cosine sim", np.mean(pairwise_similarities), iteration=self.num_timesteps
-            )
+            self.train()
+
         callback.on_training_end()
 
         return self
@@ -543,7 +575,6 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
                 self.rollout_buffer_class = DictRolloutBuffer
             else:
                 self.rollout_buffer_class = AvecRolloutBuffer
-
         self.rollout_buffer = self.rollout_buffer_class(
             self.n_steps,
             self.observation_space,  # type: ignore[arg-type]
@@ -568,6 +599,9 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         rollout_buffer: AvecRolloutBuffer,
         n_rollout_steps: int,
         flag: bool,
+        alpha: float = None,
+        n_flags: int = None,
+        number_of_flags: int = None,
         update: bool = True,
         value_function_eval: bool = False,
     ) -> bool:
@@ -604,6 +638,7 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         true_values = []
         MC_values = np.array([])
         # pbar = tqdm(total=n_rollout_steps, desc="Collecting")
+
         while n_steps < n_rollout_steps:
             if self.use_sde and self.sde_sample_freq > 0 and n_steps % self.sde_sample_freq == 0:
                 # Sample a new noise matrix
@@ -634,48 +669,35 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
             if flag and (n_steps in samples) and value_function_eval:
                 self.num_eval_timesteps += 1
                 pbar.update(1)
-                state = [{"qvel": env.unwrapped.data.qvel, "qpos": env.unwrapped.data.qpos} for env in env.envs]
-                state = state[0]  # TODO : find how to fix this?
-                eval_buffer = self.collect_rollouts_MC_from_state(
-                    self.n_eval_rollout_envs,
-                    state,
-                    n_rollout_steps=ceil(self.n_eval_rollout_steps / self.n_eval_rollout_envs),
+                state = get_state(env)
+                states_values_MC, MC_episode_lengths, nb_full_episodes = self.compute_or_load_true_values(
+                    state, n_flags, number_of_flags, alpha, state_idx=n_steps
                 )
-                states_values_MC = eval_buffer.returns[eval_buffer.episode_starts.astype("bool")]
-                nb_full_episodes = eval_buffer.episode_starts.sum() - 1
-                states_values_MC = (
-                    states_values_MC[: -eval_buffer.episode_starts.shape[1]]
-                    if eval_buffer.episode_starts.ndim > 1
-                    else states_values_MC[:-1]
-                )  # remove last one(s) as it is not a full episode
+
                 MC_values = np.concatenate((MC_values, states_values_MC), axis=None)
-                MC_episode_lengths = [
-                    len(x) + 1
-                    for x in "".join(eval_buffer.episode_starts.T.flatten().astype("int").astype("str")).split("1")[1:]
-                ]
-                predicted_values.append(values.detach().numpy())
+                predicted_values.append(values.detach().numpy()[0])
                 true_value = states_values_MC.mean(axis=0)
                 true_values.append(true_value)
                 value_error = (true_value - values.detach().numpy()) ** 2
                 value_errors.append(value_error)
                 normalized_value_errors.append(value_error / (MC_values.mean(axis=0) ** 2))
 
-                self.logger.record("MC/MC episode mean length", np.mean(MC_episode_lengths))
-                self.logger.record("MC/MC episode std length", np.std(MC_episode_lengths))
-                self.logger.record("MC/number of complete trajectories", nb_full_episodes)
-                self.logger.record("value/value MC mean", np.mean(MC_values))
-                self.logger.record("value/value MC std", np.std(MC_values))
-                self.logger.record("value/value std (variance)", np.std(predicted_values))
-                self.logger.record(
-                    "value/normalized value std (variance)", np.std(predicted_values) / np.mean(predicted_values)
-                )
-                self.logger.record("value/value mean", np.mean(predicted_values))
-                self.logger.record("value/eval step", self.num_eval_timesteps)
-                self.logger.record("errors/error std", np.std(value_errors))
-                self.logger.record("errors/error mean (bias)", np.mean(value_errors))
-                self.logger.record("errors/normalized error mean (bias)", np.mean(normalized_value_errors))
-                self.logger.record("errors/normalized error std", np.std(normalized_value_errors))
-                self.logger.dump(step=self.num_timesteps)
+                # self.logger.record("MC/MC episode mean length", np.mean(MC_episode_lengths))
+                # self.logger.record("MC/MC episode std length", np.std(MC_episode_lengths))
+                # self.logger.record("MC/number of complete trajectories", nb_full_episodes)
+                # self.logger.record("value/value MC mean", np.mean(MC_values))
+                # self.logger.record("value/value MC std", np.std(MC_values))
+                # self.logger.record("value/value std (variance)", np.std(predicted_values))
+                # self.logger.record(
+                #     "value/normalized value std (variance)", np.std(predicted_values) / np.mean(predicted_values)
+                # )
+                # self.logger.record("value/value mean", np.mean(predicted_values))
+                # self.logger.record("value/eval step", self.num_eval_timesteps)
+                # self.logger.record("errors/error std", np.std(value_errors))
+                # self.logger.record("errors/error mean (bias)", np.mean(value_errors))
+                # self.logger.record("errors/normalized error mean (bias)", np.mean(normalized_value_errors))
+                # self.logger.record("errors/normalized error std", np.std(normalized_value_errors))
+                # self.logger.dump(step=self.num_timesteps)
 
             # Give access to local variables
             if update:
@@ -684,7 +706,7 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
                     return False
             if update:
                 self._update_info_buffer(infos, dones)
-            n_steps += env.num_envs
+            n_steps += 1
             # pbar.update(env.num_envs)
 
             if isinstance(self.action_space, spaces.Discrete):
@@ -724,30 +746,31 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         rollout_buffer.compute_returns_and_advantage(last_values=values, dones=dones)
         if flag and value_function_eval:
 
-            predicted_state_order = [
-                idx
-                for idx in {
-                    k: v
-                    for k, v in sorted(
-                        dict(zip(range(len(predicted_values)), np.array(predicted_values).flatten())).items(),
-                        key=lambda item: item[1],
-                    )
-                }.keys()
-            ]
-            MC_state_order = [
-                idx
-                for idx in {
-                    k: v
-                    for k, v in sorted(
-                        dict(zip(range(len(true_values)), np.array(true_values).flatten())).items(), key=lambda item: item[1]
-                    )
-                }.keys()
-            ]
+            # predicted_state_order = [
+            #     idx
+            #     for idx in {
+            #         k: v
+            #         for k, v in sorted(
+            #             dict(zip(range(len(predicted_values)), np.array(predicted_values).flatten())).items(),
+            #             key=lambda item: item[1],
+            #         )
+            #     }.keys()
+            # ]
+            # MC_state_order = [
+            #     idx
+            #     for idx in {
+            #         k: v
+            #         for k, v in sorted(
+            #             dict(zip(range(len(true_values)), np.array(true_values).flatten())).items(), key=lambda item: item[1]
+            #         )
+            #     }.keys()
+            # ]
+
             self.logger.record(
                 "ranking/Kendal Tau statistic", kendalltau(np.array(predicted_values), np.array(true_values)).statistic
             )
             self.logger.record(
-                "ranking/ordered Kendal Tau statistic", kendalltau(MC_state_order, predicted_state_order).statistic
+                "ranking/Kendal Tau p-value", kendalltau(np.array(predicted_values), np.array(true_values)).pvalue
             )
             self.logger.record("errors/normalized value approximation error mean", np.mean(normalized_value_errors))
             self.logger.record("errors/normalized value approximation error std", np.std(normalized_value_errors))
@@ -757,6 +780,7 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
             self.logger.record("errors/value estimation error std", np.std(rollout_buffer.deltas))
             error_difference = np.mean((np.mean(value_errors) - np.mean(rollout_buffer.deltas)) ** 2)
             self.logger.record("errors/errors difference", error_difference)
+            self.logger.dump(step=self.num_timesteps)
 
         if update:
             callback.update_locals(locals())
@@ -818,14 +842,18 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         self.train(update=False, n_epochs=1, alpha=alpha)
         return deepcopy(self.grads)
 
-    def load_artifacts(self, number_of_flags):
+    def load_artifacts(self, number_of_flags, mode: str = "grads"):
+        if mode == "grads":
+            folder = GRADS_FOLDER
+        elif mode == "value":
+            folder = VALUE_FOLDER
         algo_name = "CORRECTED_AVEC_PPO" if self.correction else "AVEC_PPO"
         for training_frac in range(1, number_of_flags + 1):
-            filename = f"{self.env_name}_{algo_name}_{self.alpha}_{self.seed}_{training_frac*10}"
+            filename = f"{mode}_{self.env_name}_{algo_name}_{self.alpha}_{self.seed}_{training_frac*10}"
             try:
                 artifact = wandb.use_artifact(f"{filename}:latest")
                 datadir = artifact.download()
-                os.rename(os.path.join(datadir, filename + ".pkl"), os.path.join(GRADS_FOLDER, filename + ".pkl"))
+                os.rename(os.path.join(datadir, filename + ".pkl"), os.path.join(folder, filename + ".pkl"))
 
             except:  # wandb.errors.ArtifactNotLoggedError: somehow this does not exist despite being in the doc
                 continue
@@ -842,17 +870,54 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         os.makedirs(GRADS_FOLDER, exist_ok=True)
         training_frac = int((n_flags - 1) * 100 / number_of_flags)
         algo_name = "CORRECTED_AVEC_PPO" if self.correction else "AVEC_PPO"
-        filename = f"{self.env_name}_{algo_name}_{self.alpha}_{alpha}_{self.seed}_{training_frac}"
+        filename = f"grads_{self.env_name}_{algo_name}_{self.alpha}_{alpha}_{self.seed}_{training_frac}"
         if filename not in os.listdir(GRADS_FOLDER):
             true_grads = self.compute_true_grads(alpha)
             grads_path = os.path.join(GRADS_FOLDER, filename)
             save_to_pickle(true_grads, grads_path)
             wandb.log_artifact(
-                artifact_or_path=grads_path + ".pkl", name=filename, type="dataset"
+                artifact_or_path=grads_path + ".pkl", name=filename, type="grads"
             )  # Logs the artifact version "my_data" as a dataset with data from dataset.h5
         else:
             true_grads = read_from_pickle(filename)
         return true_grads
+
+    def compute_true_values(self, state):
+        state = state[0]  # TODO : find how to fix this?
+
+        eval_buffer = self.collect_rollouts_MC_from_state(
+            self.n_eval_rollout_envs,
+            state,
+            n_rollout_steps=ceil(self.n_eval_rollout_steps / self.n_eval_rollout_envs),
+        )
+        states_values_MC = eval_buffer.returns[eval_buffer.episode_starts.astype("bool")]
+        nb_full_episodes = eval_buffer.episode_starts.sum() - 1
+        states_values_MC = (
+            states_values_MC[: -eval_buffer.episode_starts.shape[1]]
+            if eval_buffer.episode_starts.ndim > 1
+            else states_values_MC[:-1]
+        )  # remove last one(s) as it is not a full episode
+
+        MC_episode_lengths = [
+            len(x) + 1 for x in "".join(eval_buffer.episode_starts.T.flatten().astype("int").astype("str")).split("1")[1:]
+        ]
+        return states_values_MC, MC_episode_lengths, nb_full_episodes
+
+    def compute_or_load_true_values(self, state, n_flags: int, number_of_flags: int, alpha: float, state_idx: int) -> list:
+        os.makedirs(VALUE_FOLDER, exist_ok=True)
+        training_frac = int((n_flags - 1) * 100 / number_of_flags)
+        algo_name = "CORRECTED_AVEC_PPO" if self.correction else "AVEC_PPO"
+        filename = f"value_{self.env_name}_{algo_name}_{alpha}_{self.seed}_{training_frac}_{state_idx}_{self.n_eval_rollout_envs}_{self.n_eval_rollout_steps}"
+        if filename not in os.listdir(VALUE_FOLDER):
+            states_values_MC, MC_episode_lengths, nb_full_episodes = self.compute_true_values(state)
+            values_path = os.path.join(VALUE_FOLDER, filename)
+            save_to_pickle((states_values_MC, MC_episode_lengths, nb_full_episodes), values_path)
+            wandb.log_artifact(
+                artifact_or_path=values_path + ".pkl", name=filename, type="value"
+            )  # Logs the artifact version "my_data" as a dataset with data from dataset.h5
+        else:
+            states_values_MC, MC_episode_lengths, nb_full_episodes = read_from_pickle(filename)
+        return states_values_MC, MC_episode_lengths, nb_full_episodes
 
     def learn(
         self,
@@ -917,6 +982,9 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
                     flag=flag,
                     update=update,
                     value_function_eval=VALUE_FUNCTION_EVAL,
+                    n_flags=n_flags,
+                    number_of_flags=number_of_flags,
+                    alpha=self.alpha,
                 )
 
                 if not continue_training:
@@ -1026,6 +1094,7 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
             self.policy.reset_noise(env.num_envs)
 
         while n_steps < n_rollout_steps:
+
             if self.use_sde and self.sde_sample_freq > 0 and n_steps % self.sde_sample_freq == 0:
                 # Sample a new noise matrix
                 self.policy.reset_noise(env.num_envs)
