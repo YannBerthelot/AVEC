@@ -23,6 +23,7 @@ from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedul
 from stable_baselines3.common.utils import obs_as_tensor, safe_mean
 from stable_baselines3.common.vec_env import VecEnv
 from tqdm import tqdm
+from scipy.stats import kendalltau
 
 SelfOnPolicyAlgorithm = TypeVar("SelfOnPolicyAlgorithm", bound="OnPolicyAlgorithm")
 
@@ -32,7 +33,8 @@ from gymnasium import Wrapper
 
 GRADS_FOLDER = "grads"
 N_GRADIENT_ROLLOUTS = 10
-VALUE_FUNCTION_EVAL = False
+VALUE_FUNCTION_EVAL = True
+GRAD_EVAL = False
 number_of_flags = 10
 
 
@@ -410,7 +412,6 @@ class OnPolicyAlgorithm(BaseAlgorithm):
                     self.old_grads = self.grads
                 if self.old_policy_params is not None:
                     pairwise_sims = get_pairwise_sim_from_nets_params(self.policy.parameters(), self.old_policy_params)
-                    pdb.set_trace()
                 self.old_policy_params = deepcopy(self.policy.parameters())
         assert len(pairwise_similarities == N_GRADIENT_ROLLOUTS)
         if len(pairwise_similarities) > 0:
@@ -493,8 +494,9 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         device: Union[th.device, str] = "auto",
         _init_setup_model: bool = True,
         supported_action_spaces: Optional[Tuple[Type[spaces.Space], ...]] = None,
-        n_eval_rollout_steps: int = int(1e5),
+        n_eval_rollout_steps: int = int(1e6),
         n_eval_rollout_envs: int = 32,
+        n_samples_MC: int = 100,
     ):
         super().__init__(
             policy=policy,
@@ -528,6 +530,7 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         self.grads = None
         self.old_grads = None
         self.old_policy_params = None
+        self.n_samples_MC = n_samples_MC
         if _init_setup_model:
             self._setup_model()
 
@@ -592,13 +595,13 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         if update:
             callback.on_rollout_start()
 
-        N_SAMPLES = 100
         if flag and value_function_eval:
-            pbar = tqdm(total=N_SAMPLES, desc="Collecting")
-        samples = np.random.choice(n_rollout_steps, N_SAMPLES)
+            pbar = tqdm(total=self.n_samples_MC, desc="Collecting")
+        samples = np.random.choice(n_rollout_steps, self.n_samples_MC)
         value_errors = []
         normalized_value_errors = []
         predicted_values = []
+        true_values = []
         MC_values = np.array([])
         # pbar = tqdm(total=n_rollout_steps, desc="Collecting")
         while n_steps < n_rollout_steps:
@@ -651,9 +654,12 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
                     for x in "".join(eval_buffer.episode_starts.T.flatten().astype("int").astype("str")).split("1")[1:]
                 ]
                 predicted_values.append(values.detach().numpy())
-                value_error = (states_values_MC.mean(axis=0) - values.detach().numpy()) ** 2
+                true_value = states_values_MC.mean(axis=0)
+                true_values.append(true_value)
+                value_error = (true_value - values.detach().numpy()) ** 2
                 value_errors.append(value_error)
                 normalized_value_errors.append(value_error / (MC_values.mean(axis=0) ** 2))
+
                 self.logger.record("MC/MC episode mean length", np.mean(MC_episode_lengths))
                 self.logger.record("MC/MC episode std length", np.std(MC_episode_lengths))
                 self.logger.record("MC/number of complete trajectories", nb_full_episodes)
@@ -717,6 +723,32 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
 
         rollout_buffer.compute_returns_and_advantage(last_values=values, dones=dones)
         if flag and value_function_eval:
+
+            predicted_state_order = [
+                idx
+                for idx in {
+                    k: v
+                    for k, v in sorted(
+                        dict(zip(range(len(predicted_values)), np.array(predicted_values).flatten())).items(),
+                        key=lambda item: item[1],
+                    )
+                }.keys()
+            ]
+            MC_state_order = [
+                idx
+                for idx in {
+                    k: v
+                    for k, v in sorted(
+                        dict(zip(range(len(true_values)), np.array(true_values).flatten())).items(), key=lambda item: item[1]
+                    )
+                }.keys()
+            ]
+            self.logger.record(
+                "ranking/Kendal Tau statistic", kendalltau(np.array(predicted_values), np.array(true_values)).statistic
+            )
+            self.logger.record(
+                "ranking/ordered Kendal Tau statistic", kendalltau(MC_state_order, predicted_state_order).statistic
+            )
             self.logger.record("errors/normalized value approximation error mean", np.mean(normalized_value_errors))
             self.logger.record("errors/normalized value approximation error std", np.std(normalized_value_errors))
             self.logger.record("errors/value estimation error mean", np.mean(rollout_buffer.deltas))
@@ -861,14 +893,22 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
             self.old_policy_params = None
             grads = None
             avec_grads = None
-            n_iterations = 2 if (VALUE_FUNCTION_EVAL or not (flag)) else N_GRADIENT_ROLLOUTS + 1
+            if VALUE_FUNCTION_EVAL:
+                assert not GRAD_EVAL
+                n_iterations = 1
+            elif GRAD_EVAL and flag:
+                n_iterations = N_GRADIENT_ROLLOUTS
+            else:
+                n_iterations = 1
+
             if flag:
                 n_flags += 1
-                true_grads = self.compute_or_load_true_grads(n_flags, number_of_flags, alpha=self.alpha)
-                avec_true_grads = self.compute_or_load_true_grads(n_flags, number_of_flags, alpha=0.0)
+                if GRAD_EVAL:
+                    true_grads = self.compute_or_load_true_grads(n_flags, number_of_flags, alpha=self.alpha)
+                    avec_true_grads = self.compute_or_load_true_grads(n_flags, number_of_flags, alpha=0.0)
 
-            for num_rollout in range(1, n_iterations):
-                update = num_rollout == n_iterations - 1
+            for num_rollout in range(1, n_iterations + 1):
+                update = num_rollout == n_iterations
                 continue_training = self.collect_rollouts(
                     self.env,
                     callback,
@@ -889,47 +929,52 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
                 if log_interval is not None and iteration % log_interval == 0:
                     assert self.ep_info_buffer is not None
                     self._dump_logs(iteration)
-                if flag:
-                    self.train(update=False, n_epochs=1)
-                    grads = deepcopy(self.grads)
-                    self.train(update=False, n_epochs=1, alpha=0.0)
-                    avec_grads = deepcopy(self.grads)
-                if self.old_grads is not None and flag:
-                    assert self.old_avec_grads is not None
-                    pairwise_cosine_sim = compute_pairwise_from_grads(grads, self.old_grads)
-                    avec_pairwise_cosine_sim = compute_pairwise_from_grads(avec_grads, self.old_avec_grads)
-                    pairwise_similarities.append(np.mean(pairwise_cosine_sim))
-                    avec_pairwise_similarities.append(np.mean(avec_pairwise_cosine_sim))
-                if flag and num_rollout == 1:  # TODO : check that it goes as intended
-                    self.train(update=False, n_epochs=1, alpha=self.alpha)
-                    true_gradient_pairwise_cosine_sim = compute_pairwise_from_grads(self.grads, true_grads)
-                    average_true_gradient_pairwise_cosine_sim = np.mean(true_gradient_pairwise_cosine_sim)
-                    self.train(update=False, n_epochs=1, alpha=0.0)
-                    avec_true_gradient_pairwise_cosine_sim = compute_pairwise_from_grads(self.grads, true_grads)
-                    avec_average_true_gradient_pairwise_cosine_sim = np.mean(avec_true_gradient_pairwise_cosine_sim)
-                    avec_avec_true_gradient_pairwise_cosine_sim = compute_pairwise_from_grads(self.grads, avec_true_grads)
-                    avec_avec_average_true_gradient_pairwise_cosine_sim = np.mean(avec_avec_true_gradient_pairwise_cosine_sim)
-                if flag and update:
-                    assert len(pairwise_similarities) == N_GRADIENT_ROLLOUTS - 1, f"{len(pairwise_similarities)}"
-                    self.logger.record("fraction of training steps", int((n_flags - 1) * 100 / number_of_flags))
-                    self.logger.record("gradients/average pairwise cosine sim", np.mean(pairwise_similarities))
-                    self.logger.record("gradients/avec average pairwise cosine sim", np.mean(avec_pairwise_similarities))
-                    self.logger.record(
-                        "gradients/convergence to the true gradients", average_true_gradient_pairwise_cosine_sim
-                    )
-                    self.logger.record(
-                        "gradients/avec convergence to the true gradients", avec_average_true_gradient_pairwise_cosine_sim
-                    )
-                    self.logger.record(
-                        "gradients/avec convergence to the true avec gradients",
-                        avec_avec_average_true_gradient_pairwise_cosine_sim,
-                    )
-                    self.logger.dump(step=self.num_timesteps)
+                if GRAD_EVAL:
+                    if flag:
+                        self.train(update=False, n_epochs=1)
+                        grads = deepcopy(self.grads)
+                        self.train(update=False, n_epochs=1, alpha=0.0)
+                        avec_grads = deepcopy(self.grads)
+                    if self.old_grads is not None and flag:
+                        assert self.old_avec_grads is not None
+                        pairwise_cosine_sim = compute_pairwise_from_grads(grads, self.old_grads)
+                        avec_pairwise_cosine_sim = compute_pairwise_from_grads(avec_grads, self.old_avec_grads)
+                        pairwise_similarities.append(np.mean(pairwise_cosine_sim))
+                        avec_pairwise_similarities.append(np.mean(avec_pairwise_cosine_sim))
+                    if flag and num_rollout == 1:  # TODO : check that it goes as intended
+                        self.train(update=False, n_epochs=1, alpha=self.alpha)
+                        true_gradient_pairwise_cosine_sim = compute_pairwise_from_grads(self.grads, true_grads)
+                        average_true_gradient_pairwise_cosine_sim = np.mean(true_gradient_pairwise_cosine_sim)
+                        self.train(update=False, n_epochs=1, alpha=0.0)
+                        avec_true_gradient_pairwise_cosine_sim = compute_pairwise_from_grads(self.grads, true_grads)
+                        avec_average_true_gradient_pairwise_cosine_sim = np.mean(avec_true_gradient_pairwise_cosine_sim)
+                        avec_avec_true_gradient_pairwise_cosine_sim = compute_pairwise_from_grads(self.grads, avec_true_grads)
+                        avec_avec_average_true_gradient_pairwise_cosine_sim = np.mean(
+                            avec_avec_true_gradient_pairwise_cosine_sim
+                        )
+                    if flag and update:
+                        assert len(pairwise_similarities) == N_GRADIENT_ROLLOUTS - 1, f"{len(pairwise_similarities)}"
+                        self.logger.record("gradients/average pairwise cosine sim", np.mean(pairwise_similarities))
+                        self.logger.record("gradients/avec average pairwise cosine sim", np.mean(avec_pairwise_similarities))
+                        self.logger.record(
+                            "gradients/convergence to the true gradients", average_true_gradient_pairwise_cosine_sim
+                        )
+                        self.logger.record(
+                            "gradients/avec convergence to the true gradients", avec_average_true_gradient_pairwise_cosine_sim
+                        )
+                        self.logger.record(
+                            "gradients/avec convergence to the true avec gradients",
+                            avec_avec_average_true_gradient_pairwise_cosine_sim,
+                        )
+                        self.logger.dump(step=self.num_timesteps)
+
                 if update:
                     self.train(update=update)
                 if flag:
-                    self.old_grads = deepcopy(grads)
-                    self.old_avec_grads = deepcopy(avec_grads)
+                    self.logger.record("fraction of training steps", int((n_flags - 1) * 100 / number_of_flags))
+                    if GRAD_EVAL:
+                        self.old_grads = deepcopy(grads)
+                        self.old_avec_grads = deepcopy(avec_grads)
 
         callback.on_training_end()
 

@@ -53,7 +53,10 @@ if __name__ == "__main__":
     n_steps_factor = float(sys.argv[4])
     network_size_factor = float(sys.argv[5])
     alpha = float(sys.argv[6])
-    n_timesteps = int(1e6)
+    n_timesteps = int(eval(sys.argv[7]))
+    N_EVAL_TIMESTEPS = int(eval(sys.argv[8]))
+    N_SAMPLES_MC = int(sys.argv[9])
+    N_EVAL_ENVS = int(sys.argv[10])
 
     num_threads = int(psutil.cpu_count() / psutil.cpu_count(logical=False))
     torch.set_num_threads(num_threads)
@@ -109,6 +112,16 @@ if __name__ == "__main__":
         agent = AVEC_PPO
         hyperparams["alpha"] = alpha
         hyperparams["correction"] = True
-    model = agent(policy, env, tensorboard_log=f"runs/{run.id}", **hyperparams, env_name=env_name, seed=seed)
+    model = agent(
+        policy,
+        env,
+        tensorboard_log=f"runs/{run.id}",
+        **hyperparams,
+        env_name=env_name,
+        seed=seed,
+        n_eval_timesteps=N_EVAL_TIMESTEPS,
+        n_samples_MC=N_SAMPLES_MC,
+        n_eval_envs=N_EVAL_ENVS,
+    )
     model.learn(total_timesteps=n_timesteps, callback=WandbCallback())
     run.finish()

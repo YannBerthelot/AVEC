@@ -120,6 +120,9 @@ class AVEC_PPO(AvecOnPolicyAlgorithm):
         device: Union[th.device, str] = "auto",
         _init_setup_model: bool = True,
         env_name: str = None,
+        n_eval_timesteps: int = int(1e6),
+        n_samples_MC: int = 100,
+        n_eval_envs: int = 32,
     ):
         self.env_name = env_name
         super().__init__(
@@ -151,6 +154,9 @@ class AVEC_PPO(AvecOnPolicyAlgorithm):
                 spaces.MultiDiscrete,
                 spaces.MultiBinary,
             ),
+            n_eval_rollout_steps=n_eval_timesteps,
+            n_samples_MC=n_samples_MC,
+            n_eval_rollout_envs=n_eval_envs,
         )
 
         # Sanity check, otherwise it will lead to noisy gradient and NaN
