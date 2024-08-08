@@ -121,6 +121,8 @@ class ClassicControlWrapper(Wrapper):
             self.render()
         if "_get_obs" in dir(self.env.unwrapped):
             obs = self.env.unwrapped._get_obs()
+        elif "_get_ob" in dir(self.env.unwrapped):
+            obs = self.env.unwrapped._get_ob()
         else:
             obs = np.array(self.state, dtype=np.float32)
         return obs, {}
