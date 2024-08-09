@@ -51,7 +51,7 @@ def compute_pairwise_from_grads(grads_1, grads_2) -> list:
 
 
 def get_state(env):
-    is_mujoco = "data" in dir(env.unwrapped)
+    is_mujoco = "data" in dir(env.envs[0].unwrapped)
     if is_mujoco:
         state = [{"qvel": env.unwrapped.data.qvel, "qpos": env.unwrapped.data.qpos} for env in env.envs]
     else:
