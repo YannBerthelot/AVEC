@@ -746,28 +746,8 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
             values = self.policy.predict_values(obs_as_tensor(new_obs, self.device))  # type: ignore[arg-type]
 
         rollout_buffer.compute_returns_and_advantage(last_values=values, dones=dones)
+
         if flag and value_function_eval:
-
-            # predicted_state_order = [
-            #     idx
-            #     for idx in {
-            #         k: v
-            #         for k, v in sorted(
-            #             dict(zip(range(len(predicted_values)), np.array(predicted_values).flatten())).items(),
-            #             key=lambda item: item[1],
-            #         )
-            #     }.keys()
-            # ]
-            # MC_state_order = [
-            #     idx
-            #     for idx in {
-            #         k: v
-            #         for k, v in sorted(
-            #             dict(zip(range(len(true_values)), np.array(true_values).flatten())).items(), key=lambda item: item[1]
-            #         )
-            #     }.keys()
-            # ]
-
             self.logger.record(
                 "ranking/Kendal Tau statistic", kendalltau(np.array(predicted_values), np.array(true_values)).statistic
             )
@@ -782,12 +762,10 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
             self.logger.record("errors/value estimation error std", np.std(rollout_buffer.deltas))
             error_difference = np.mean((np.mean(value_errors) - np.mean(rollout_buffer.deltas)) ** 2)
             self.logger.record("errors/errors difference", error_difference)
-            self.logger.dump(step=self.num_timesteps)
-
+            # self.logger.dump(step=self.num_timesteps)
         if update:
             callback.update_locals(locals())
             callback.on_rollout_end()
-
         return True
 
     def train(self) -> None:
@@ -1079,7 +1057,6 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         self.policy.set_training_mode(False)
         _last_episode_starts = np.ones((num_envs,), dtype=bool)
         n_steps = 0
-        num_timesteps = 0
         env = get_fixed_reset_state_env(self.env_name, num_envs, states)
         _last_obs = env.reset()
         evaluation_rollout_buffer = EvaluationAvecRolloutBuffer(
@@ -1120,8 +1097,7 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
                     clipped_actions = np.clip(actions, self.action_space.low, self.action_space.high)
             new_obs, rewards, dones, infos = env.step(clipped_actions)
             # TODO : investigate why no environment fail early?
-            n_steps += 1
-            num_timesteps += num_envs
+            n_steps += num_envs
 
             if isinstance(self.action_space, spaces.Discrete):
                 # Reshape in case of discrete action
