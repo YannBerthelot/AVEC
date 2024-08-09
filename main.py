@@ -11,7 +11,8 @@ import torch.nn as nn
 import yaml
 import os
 import psutil
-
+from copy import deepcopy
+from functools import partial
 
 DEFAULT_N_STEPS = 2048
 
@@ -25,13 +26,17 @@ def read_hyperparams_data(file_name):
         return hyperparams_data
 
 
+def linear_schedule(x, init_x):
+    return x * init_x
+
+
 def parse_hyperparams(env_name, hyperparams_data):
     hyperparams = hyperparams_data[env_name]
     for key, value in hyperparams.items():
         if isinstance(value, str):
             if "lin" in value:
                 true_val = float(value.split("_")[1])
-                hyperparams[key] = lambda x: x * true_val
+                hyperparams[key] = partial(linear_schedule, init_x=true_val)
     if "normalize" in hyperparams.keys():
         normalize = hyperparams.pop("normalize")
     else:
@@ -96,7 +101,7 @@ if __name__ == "__main__":
         )
 
     run = wandb.init(
-        project="avec experiments ranking 2",
+        project="avec experiments ranking local",
         sync_tensorboard=True,
         config={
             "agent": "PPO",
@@ -113,24 +118,24 @@ if __name__ == "__main__":
         env = VecNormalize(env, gamma=hyperparams["gamma"] if "gamma" in hyperparams.keys() else 0.99)
     if mode == "PPO":
         agent = PPO
-    elif mode == "AVEC_PPO":
-        agent = AVEC_PPO
+    else:
+        hyperparams["env_name"] = env_name
         hyperparams["alpha"] = alpha
-        hyperparams["correction"] = False  # for logging, not needed
-    elif mode == "CORRECTED_AVEC_PPO":
-        agent = AVEC_PPO
-        hyperparams["alpha"] = alpha
-        hyperparams["correction"] = True
+        hyperparams["n_eval_timesteps"] = N_EVAL_TIMESTEPS
+        hyperparams["n_samples_MC"] = N_SAMPLES_MC
+        hyperparams["n_eval_envs"] = N_EVAL_ENVS
+        if mode == "AVEC_PPO":
+            agent = AVEC_PPO
+        elif mode == "CORRECTED_AVEC_PPO":
+            hyperparams["correction"] = True
+            agent = AVEC_PPO
+
     model = agent(
         policy,
         env,
         tensorboard_log=f"runs/{run.id}",
         **hyperparams,
-        env_name=env_name,
         seed=seed,
-        n_eval_timesteps=N_EVAL_TIMESTEPS,
-        n_samples_MC=N_SAMPLES_MC,
-        n_eval_envs=N_EVAL_ENVS,
     )
     model.learn(total_timesteps=n_timesteps if n_timesteps is not None else n_timesteps_user, callback=WandbCallback())
     run.finish()
