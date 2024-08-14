@@ -1,20 +1,13 @@
-import os
-import pickle
-import pdb
 import sys
 import time
-import wandb
+from copy import deepcopy
 from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union
-from math import ceil, floor
 import numpy as np
 import torch as th
-from sklearn.metrics.pairwise import cosine_similarity
+from tqdm import tqdm
+
 from gymnasium import spaces
-import gymnasium as gym
-import wandb.errors
-from stable_baselines3.common.vec_env.base_vec_env import VecEnv, VecEnvStepReturn, VecEnvWrapper
-from math import ceil
-from copy import deepcopy, copy
+from stable_baselines3.common.vec_env.base_vec_env import VecEnv
 from stable_baselines3.common.base_class import BaseAlgorithm
 from stable_baselines3.common.buffers import DictRolloutBuffer, AvecRolloutBuffer, RolloutBuffer, EvaluationAvecRolloutBuffer
 from stable_baselines3.common.callbacks import BaseCallback
@@ -22,140 +15,23 @@ from stable_baselines3.common.policies import ActorCriticPolicy
 from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedule
 from stable_baselines3.common.utils import obs_as_tensor, safe_mean
 from stable_baselines3.common.vec_env import VecEnv
-from tqdm import tqdm
-from scipy.stats import kendalltau
+from stable_baselines3.common.avec_utils import (
+    load_artifacts,
+    compute_or_load_true_grads,
+    evaluate_and_log_grads,
+    evaluate_value_function,
+    ranking_and_error_logging,
+)
+
 
 SelfOnPolicyAlgorithm = TypeVar("SelfOnPolicyAlgorithm", bound="OnPolicyAlgorithm")
 
-from stable_baselines3.common.env_util import make_vec_env
 
-from gymnasium import Wrapper
-
-GRADS_FOLDER = "grads"
-VALUE_FOLDER = "value"
 N_GRADIENT_ROLLOUTS = 10
-VALUE_FUNCTION_EVAL = True
-GRAD_EVAL = False
+VALUE_FUNCTION_EVAL = False
+GRAD_EVAL = True
+TRUE_ALGO_NAME = "PPO"
 number_of_flags = 10
-
-
-def compute_pairwise_from_grads(grads_1, grads_2) -> list:
-    similarities = []
-    for g_1, g_2 in zip(grads_1, grads_2):
-        if g_1.ndim == 1:
-            assert g_2.ndim == g_1.ndim
-            similarities.append(cosine_similarity(g_1.reshape(1, -1), g_2.reshape(1, -1)).mean())
-        else:
-            similarities.append(cosine_similarity(g_1, g_2).mean())
-    return similarities
-
-
-def get_state(env):
-    is_mujoco = "data" in dir(env.envs[0].unwrapped)
-    if is_mujoco:
-        state = [{"qvel": env.unwrapped.data.qvel, "qpos": env.unwrapped.data.qpos} for env in env.envs]
-    else:
-        state = [env.unwrapped.state for env in env.envs]
-    return state
-
-
-def save_to_pickle(obj, filename):
-    with open(f"{filename}.pkl", "wb") as handle:
-        pickle.dump(obj, handle, protocol=pickle.HIGHEST_PROTOCOL)
-
-
-def read_from_pickle(filename):
-    with open(f"{filename}.pkl", "rb") as handle:
-        return pickle.load(handle)
-
-
-MUJOCO_NAMES = [
-    "Ant",
-    "HalfCheetah",
-    "Hopper",
-    "Humanoid",
-    "HumanoidStandup",
-    "Reacher",
-    "Walker2D",
-    "Swimmer",
-    "InvertedDoublePendulum",
-    "InvertedPendulum",
-    "Pusher",
-]
-
-
-def get_fixed_reset_state_env(env_name: str, num_envs: int, states):
-    # env = gym.make(env_name, max_episode_steps=int(1e3))
-    is_mujoco = env_name.split("-")[0] in MUJOCO_NAMES
-    if is_mujoco:
-        wrapper = MujocoResetWrapper
-    else:
-        wrapper = ClassicControlWrapper
-    env = make_vec_env(env_id=env_name, n_envs=num_envs, wrapper_class=wrapper, wrapper_kwargs={"state": states})
-
-    # env = make_vec_env(MujocoResetWrapper, n_envs=num_envs, env_kwargs={"env": env, "state": states})
-    return env
-
-
-import mujoco
-from gymnasium import Env
-
-
-class ClassicControlWrapper(Wrapper):
-    def __init__(self, env: Env, state):
-        super().__init__(env)
-        self.state = state
-
-    def reset(
-        self,
-        *,
-        seed: Optional[int] = None,
-        options: Optional[dict] = None,
-    ):
-        self.env.reset(seed=seed)
-
-        self.env.unwrapped.state = self.state
-        self.steps_beyond_terminated = None
-
-        if self.render_mode == "human":
-            self.render()
-        if "_get_obs" in dir(self.env.unwrapped):
-            obs = self.env.unwrapped._get_obs()
-        elif "_get_ob" in dir(self.env.unwrapped):
-            obs = self.env.unwrapped._get_ob()
-        else:
-            obs = np.array(self.state, dtype=np.float32)
-        return obs, {}
-
-
-class MujocoResetWrapper(Wrapper):
-    def __init__(self, env: Env, state):
-        super().__init__(env)
-        self.state = state
-
-    def reset(
-        self,
-        *,
-        seed: Optional[int] = None,
-        options: Optional[dict] = None,
-    ):
-        self.env.reset(seed=seed)
-
-        mujoco.mj_resetData(self.model, self.data)
-
-        ob = self.reset_model()
-        info = self.env.unwrapped._get_reset_info()
-
-        if self.render_mode == "human":
-            self.render()
-        return ob, info
-
-    def reset_model(self):
-        qpos = self.state["qpos"]
-        qvel = self.state["qvel"]
-        self.env.unwrapped.set_state(qpos, qvel)
-        observation = self.env.unwrapped._get_obs()
-        return observation
 
 
 class OnPolicyAlgorithm(BaseAlgorithm):
@@ -531,7 +407,12 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         n_eval_rollout_steps: int = int(1e6),
         n_eval_rollout_envs: int = 32,
         n_samples_MC: int = 100,
+        grads_folder: str = "grads",
+        value_folder: str = "values",
+        grad_eval: bool = False,
+        value_eval: bool = False,
     ):
+        self.true_algo_name = TRUE_ALGO_NAME
         super().__init__(
             policy=policy,
             env=env,
@@ -558,6 +439,7 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         self.max_grad_norm = max_grad_norm
         self.rollout_buffer_class = rollout_buffer_class
         self.rollout_buffer_kwargs = rollout_buffer_kwargs or {}
+
         self.n_eval_rollout_steps = n_eval_rollout_steps
         self.n_eval_rollout_envs = n_eval_rollout_envs
         self.num_eval_timesteps = 0
@@ -565,6 +447,8 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         self.old_grads = None
         self.old_policy_params = None
         self.n_samples_MC = n_samples_MC
+        self.grads_folder = grads_folder
+        self.value_folder = value_folder
         if _init_setup_model:
             self._setup_model()
 
@@ -638,9 +522,7 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         normalized_value_errors = []
         predicted_values = []
         true_values = []
-        MC_values = np.array([])
-        # pbar = tqdm(total=n_rollout_steps, desc="Collecting")
-
+        MC_values = []
         while n_steps < n_rollout_steps:
             if self.use_sde and self.sde_sample_freq > 0 and n_steps % self.sde_sample_freq == 0:
                 # Sample a new noise matrix
@@ -669,37 +551,22 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
             if update:
                 self.num_timesteps += env.num_envs
             if flag and (n_steps in samples) and value_function_eval:
-                self.num_eval_timesteps += 1
                 pbar.update(1)
-                state = get_state(env)
-                states_values_MC, MC_episode_lengths, nb_full_episodes = self.compute_or_load_true_values(
-                    state, n_flags, number_of_flags, alpha, state_idx=n_steps
+                predicted_values, true_values, value_errors, normalized_value_errors = evaluate_value_function(
+                    self,
+                    env,
+                    n_flags,
+                    number_of_flags,
+                    alpha,
+                    n_steps,
+                    predicted_values,
+                    values,
+                    true_values,
+                    value_errors,
+                    MC_values,
+                    normalized_value_errors,
+                    TRUE_ALGO_NAME,
                 )
-
-                MC_values = np.concatenate((MC_values, states_values_MC), axis=None)
-                predicted_values.append(values.detach().numpy()[0])
-                true_value = states_values_MC.mean(axis=0)
-                true_values.append(true_value)
-                value_error = (true_value - values.detach().numpy()) ** 2
-                value_errors.append(value_error)
-                normalized_value_errors.append(value_error / (MC_values.mean(axis=0) ** 2))
-
-                # self.logger.record("MC/MC episode mean length", np.mean(MC_episode_lengths))
-                # self.logger.record("MC/MC episode std length", np.std(MC_episode_lengths))
-                # self.logger.record("MC/number of complete trajectories", nb_full_episodes)
-                # self.logger.record("value/value MC mean", np.mean(MC_values))
-                # self.logger.record("value/value MC std", np.std(MC_values))
-                # self.logger.record("value/value std (variance)", np.std(predicted_values))
-                # self.logger.record(
-                #     "value/normalized value std (variance)", np.std(predicted_values) / np.mean(predicted_values)
-                # )
-                # self.logger.record("value/value mean", np.mean(predicted_values))
-                # self.logger.record("value/eval step", self.num_eval_timesteps)
-                # self.logger.record("errors/error std", np.std(value_errors))
-                # self.logger.record("errors/error mean (bias)", np.mean(value_errors))
-                # self.logger.record("errors/normalized error mean (bias)", np.mean(normalized_value_errors))
-                # self.logger.record("errors/normalized error std", np.std(normalized_value_errors))
-                # self.logger.dump(step=self.num_timesteps)
 
             # Give access to local variables
             if update:
@@ -709,7 +576,6 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
             if update:
                 self._update_info_buffer(infos, dones)
             n_steps += 1
-            # pbar.update(env.num_envs)
 
             if isinstance(self.action_space, spaces.Discrete):
                 # Reshape in case of discrete action
@@ -748,21 +614,14 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         rollout_buffer.compute_returns_and_advantage(last_values=values, dones=dones)
 
         if flag and value_function_eval:
-            self.logger.record(
-                "ranking/Kendal Tau statistic", kendalltau(np.array(predicted_values), np.array(true_values)).statistic
+            ranking_and_error_logging(
+                self,
+                predicted_values=predicted_values,
+                true_values=true_values,
+                deltas=rollout_buffer.deltas,
+                normalized_value_errors=normalized_value_errors,
+                value_errors=value_errors,
             )
-            self.logger.record(
-                "ranking/Kendal Tau p-value", kendalltau(np.array(predicted_values), np.array(true_values)).pvalue
-            )
-            self.logger.record("errors/normalized value approximation error mean", np.mean(normalized_value_errors))
-            self.logger.record("errors/normalized value approximation error std", np.std(normalized_value_errors))
-            self.logger.record("errors/value estimation error mean", np.mean(rollout_buffer.deltas))
-            self.logger.record("errors/value approximation error mean", np.mean(value_errors))
-            self.logger.record("errors/value approximation error std", np.std(value_errors))
-            self.logger.record("errors/value estimation error std", np.std(rollout_buffer.deltas))
-            error_difference = np.mean((np.mean(value_errors) - np.mean(rollout_buffer.deltas)) ** 2)
-            self.logger.record("errors/errors difference", error_difference)
-            # self.logger.dump(step=self.num_timesteps)
         if update:
             callback.update_locals(locals())
             callback.on_rollout_end()
@@ -797,108 +656,6 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
             self.logger.record("rollout/success_rate", safe_mean(self.ep_success_buffer))
         self.logger.dump(step=self.num_timesteps)
 
-    def get_true_grads_from_policy(self, alpha: float, env_name: str, num_envs: int = 32, n_steps: int = int(1e6)):
-        env = make_vec_env(env_id=env_name, n_envs=num_envs)
-        self._last_obs = env.reset()
-        rollout_buffer = self.rollout_buffer_class(
-            ceil(n_steps / num_envs),
-            self.observation_space,  # type: ignore[arg-type]
-            self.action_space,
-            device=self.device,
-            gamma=self.gamma,
-            gae_lambda=self.gae_lambda,
-            n_envs=num_envs,
-            **self.rollout_buffer_kwargs,
-        )
-        self.collect_rollouts(
-            env,
-            None,
-            rollout_buffer,
-            n_rollout_steps=n_steps,
-            flag=False,
-            update=False,
-            value_function_eval=False,
-        )
-        self.train(update=False, n_epochs=1, alpha=alpha)
-        return deepcopy(self.grads)
-
-    def load_artifacts(self, number_of_flags, mode: str = "grads"):
-        if mode == "grads":
-            folder = GRADS_FOLDER
-        elif mode == "value":
-            folder = VALUE_FOLDER
-        algo_name = "CORRECTED_AVEC_PPO" if self.correction else "AVEC_PPO"
-        for training_frac in range(1, number_of_flags + 1):
-            filename = f"{mode}_{self.env_name}_{algo_name}_{self.alpha}_{self.seed}_{training_frac*10}"
-            try:
-                artifact = wandb.use_artifact(f"{filename}:latest")
-                datadir = artifact.download()
-                os.rename(os.path.join(datadir, filename + ".pkl"), os.path.join(folder, filename + ".pkl"))
-
-            except:  # wandb.errors.ArtifactNotLoggedError: somehow this does not exist despite being in the doc
-                continue
-
-    def compute_true_grads(self, alpha) -> list:
-        old_last_obs = deepcopy(self._last_obs)
-        old_episode_starts = deepcopy(self._last_episode_starts)
-        true_grads = self.get_true_grads_from_policy(alpha, env_name=self.env_name)
-        self._last_obs = old_last_obs
-        self._last_episode_starts = old_episode_starts
-        return true_grads
-
-    def compute_or_load_true_grads(self, n_flags: int, number_of_flags: int, alpha: float) -> list:
-        os.makedirs(GRADS_FOLDER, exist_ok=True)
-        training_frac = int((n_flags - 1) * 100 / number_of_flags)
-        algo_name = "CORRECTED_AVEC_PPO" if self.correction else "AVEC_PPO"
-        filename = f"grads_{self.env_name}_{algo_name}_{self.alpha}_{alpha}_{self.seed}_{training_frac}"
-        if filename not in os.listdir(GRADS_FOLDER):
-            true_grads = self.compute_true_grads(alpha)
-            grads_path = os.path.join(GRADS_FOLDER, filename)
-            save_to_pickle(true_grads, grads_path)
-            wandb.log_artifact(
-                artifact_or_path=grads_path + ".pkl", name=filename, type="grads"
-            )  # Logs the artifact version "my_data" as a dataset with data from dataset.h5
-        else:
-            true_grads = read_from_pickle(filename)
-        return true_grads
-
-    def compute_true_values(self, state):
-        state = state[0]  # TODO : find how to fix this?
-
-        eval_buffer = self.collect_rollouts_MC_from_state(
-            self.n_eval_rollout_envs,
-            state,
-            n_rollout_steps=ceil(self.n_eval_rollout_steps / self.n_eval_rollout_envs),
-        )
-        states_values_MC = eval_buffer.returns[eval_buffer.episode_starts.astype("bool")]
-        nb_full_episodes = eval_buffer.episode_starts.sum() - 1
-        states_values_MC = (
-            states_values_MC[: -eval_buffer.episode_starts.shape[1]]
-            if eval_buffer.episode_starts.ndim > 1
-            else states_values_MC[:-1]
-        )  # remove last one(s) as it is not a full episode
-
-        MC_episode_lengths = [
-            len(x) + 1 for x in "".join(eval_buffer.episode_starts.T.flatten().astype("int").astype("str")).split("1")[1:]
-        ]
-        return states_values_MC, MC_episode_lengths, nb_full_episodes
-
-    def compute_or_load_true_values(self, state, n_flags: int, number_of_flags: int, alpha: float, state_idx: int) -> list:
-        os.makedirs(VALUE_FOLDER, exist_ok=True)
-        training_frac = int((n_flags - 1) * 100 / number_of_flags)
-        algo_name = "CORRECTED_AVEC_PPO" if self.correction else "AVEC_PPO"
-        filename = f"value_{self.env_name}_{algo_name}_{alpha}_{self.seed}_{training_frac}_{state_idx}_{self.n_eval_rollout_envs}_{self.n_eval_rollout_steps}"
-        if filename not in os.listdir(VALUE_FOLDER):
-            states_values_MC, MC_episode_lengths, nb_full_episodes = self.compute_true_values(state)
-            values_path = os.path.join(VALUE_FOLDER, filename)
-            save_to_pickle((states_values_MC, MC_episode_lengths, nb_full_episodes), values_path)
-            wandb.log_artifact(
-                artifact_or_path=values_path + ".pkl", name=filename, type="value"
-            )  # Logs the artifact version "my_data" as a dataset with data from dataset.h5
-        else:
-            states_values_MC, MC_episode_lengths, nb_full_episodes = read_from_pickle(filename)
-        return states_values_MC, MC_episode_lengths, nb_full_episodes
-
     def learn(
         self,
         total_timesteps: int,
@@ -921,8 +678,25 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         callback.on_training_start(locals(), globals())
 
         assert self.env is not None
+        assert not (GRAD_EVAL and VALUE_FUNCTION_EVAL), "Can only use either grad or value eval"
+        if GRAD_EVAL:
+            mode = "grads"
+        elif VALUE_FUNCTION_EVAL:
+            mode = "value"
+        else:
+            mode = None
 
-        self.load_artifacts(number_of_flags)
+        load_artifacts(
+            number_of_flags,
+            self.env_name,
+            correction=self.correction,
+            alpha=self.alpha,
+            seed=self.seed,
+            true_algo_name=TRUE_ALGO_NAME,
+            mode=mode,
+            grads_folder=self.grads_folder,
+            value_folder=self.value_folder,
+        )
 
         TOTAL_UPDATES = total_timesteps // self.n_steps
 
@@ -949,8 +723,18 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
             if flag:
                 n_flags += 1
                 if GRAD_EVAL:
-                    true_grads = self.compute_or_load_true_grads(n_flags, number_of_flags, alpha=self.alpha)
-                    avec_true_grads = self.compute_or_load_true_grads(n_flags, number_of_flags, alpha=0.0)
+                    true_grads = compute_or_load_true_grads(
+                        self,
+                        n_flags,
+                        number_of_flags,
+                        alpha=self.alpha,
+                    )
+                    avec_true_grads = compute_or_load_true_grads(
+                        self,
+                        n_flags,
+                        number_of_flags,
+                        alpha=0.0,
+                    )
 
             for num_rollout in range(1, n_iterations + 1):
                 update = num_rollout == n_iterations
@@ -977,44 +761,17 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
                 if log_interval is not None and iteration % log_interval == 0:
                     assert self.ep_info_buffer is not None
                     self._dump_logs(iteration)
-                if GRAD_EVAL:
-                    if flag:
-                        self.train(update=False, n_epochs=1)
-                        grads = deepcopy(self.grads)
-                        self.train(update=False, n_epochs=1, alpha=0.0)
-                        avec_grads = deepcopy(self.grads)
-                    if self.old_grads is not None and flag:
-                        assert self.old_avec_grads is not None
-                        pairwise_cosine_sim = compute_pairwise_from_grads(grads, self.old_grads)
-                        avec_pairwise_cosine_sim = compute_pairwise_from_grads(avec_grads, self.old_avec_grads)
-                        pairwise_similarities.append(np.mean(pairwise_cosine_sim))
-                        avec_pairwise_similarities.append(np.mean(avec_pairwise_cosine_sim))
-                    if flag and num_rollout == 1:  # TODO : check that it goes as intended
-                        self.train(update=False, n_epochs=1, alpha=self.alpha)
-                        true_gradient_pairwise_cosine_sim = compute_pairwise_from_grads(self.grads, true_grads)
-                        average_true_gradient_pairwise_cosine_sim = np.mean(true_gradient_pairwise_cosine_sim)
-                        self.train(update=False, n_epochs=1, alpha=0.0)
-                        avec_true_gradient_pairwise_cosine_sim = compute_pairwise_from_grads(self.grads, true_grads)
-                        avec_average_true_gradient_pairwise_cosine_sim = np.mean(avec_true_gradient_pairwise_cosine_sim)
-                        avec_avec_true_gradient_pairwise_cosine_sim = compute_pairwise_from_grads(self.grads, avec_true_grads)
-                        avec_avec_average_true_gradient_pairwise_cosine_sim = np.mean(
-                            avec_avec_true_gradient_pairwise_cosine_sim
-                        )
-                    if flag and update:
-                        assert len(pairwise_similarities) == N_GRADIENT_ROLLOUTS - 1, f"{len(pairwise_similarities)}"
-                        self.logger.record("gradients/average pairwise cosine sim", np.mean(pairwise_similarities))
-                        self.logger.record("gradients/avec average pairwise cosine sim", np.mean(avec_pairwise_similarities))
-                        self.logger.record(
-                            "gradients/convergence to the true gradients", average_true_gradient_pairwise_cosine_sim
-                        )
-                        self.logger.record(
-                            "gradients/avec convergence to the true gradients", avec_average_true_gradient_pairwise_cosine_sim
-                        )
-                        self.logger.record(
-                            "gradients/avec convergence to the true avec gradients",
-                            avec_avec_average_true_gradient_pairwise_cosine_sim,
-                        )
-                        self.logger.dump(step=self.num_timesteps)
+                if GRAD_EVAL and flag:
+                    grads, avec_grads, pairwise_similarities, avec_pairwise_similarities = evaluate_and_log_grads(
+                        self,
+                        num_rollout,
+                        pairwise_similarities,
+                        avec_pairwise_similarities,
+                        update,
+                        N_GRADIENT_ROLLOUTS,
+                        true_grads,
+                        avec_true_grads,
+                    )
 
                 if update:
                     self.train(update=update)
@@ -1032,99 +789,3 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         state_dicts = ["policy", "policy.optimizer"]
 
         return state_dicts, []
-
-    def collect_rollouts_MC_from_state(
-        self,
-        num_envs,
-        states,
-        n_rollout_steps: int,
-    ) -> bool:
-        """
-        Collect experiences using the current policy and fill a ``RolloutBuffer``.
-        The term rollout here refers to the model-free notion and should not
-        be used with the concept of rollout used in model-based RL or planning.
-
-        :param env: The training environment
-        :param callback: Callback that will be called at each step
-            (and at the beginning and end of the rollout)
-        :param rollout_buffer: Buffer to fill with rollouts
-        :param n_rollout_steps: Number of experiences to collect per environment
-        :return: True if function returned with at least `n_rollout_steps`
-            collected, False if callback terminated rollout prematurely.
-        """
-        assert self._last_obs is not None, "No previous observation was provided"
-        # Switch to eval mode (this affects batch norm / dropout)
-        self.policy.set_training_mode(False)
-        _last_episode_starts = np.ones((num_envs,), dtype=bool)
-        n_steps = 0
-        env = get_fixed_reset_state_env(self.env_name, num_envs, states)
-        _last_obs = env.reset()
-        evaluation_rollout_buffer = EvaluationAvecRolloutBuffer(
-            buffer_size=n_rollout_steps,
-            observation_space=env.observation_space,
-            action_space=env.action_space,
-            gamma=self.gamma,
-            n_envs=num_envs,
-            gae_lambda=1.0,  # MC
-        )
-        evaluation_rollout_buffer.reset()
-        # Sample new weights for the state dependent exploration
-        if self.use_sde:
-            self.policy.reset_noise(env.num_envs)
-
-        while n_steps < n_rollout_steps:
-
-            if self.use_sde and self.sde_sample_freq > 0 and n_steps % self.sde_sample_freq == 0:
-                # Sample a new noise matrix
-                self.policy.reset_noise(env.num_envs)
-
-            with th.no_grad():
-                # Convert to pytorch tensor or to TensorDict
-                obs_tensor = obs_as_tensor(_last_obs, self.device)
-                actions, values, log_probs = self.policy(obs_tensor)
-            actions = actions.cpu().numpy()
-            # Rescale and perform action
-            clipped_actions = actions
-
-            if isinstance(self.action_space, spaces.Box):
-                if self.policy.squash_output:
-                    # Unscale the actions to match env bounds
-                    # if they were previously squashed (scaled in [-1, 1])
-                    clipped_actions = self.policy.unscale_action(clipped_actions)
-                else:
-                    # Otherwise, clip the actions to avoid out of bound error
-                    # as we are sampling from an unbounded Gaussian distribution
-                    clipped_actions = np.clip(actions, self.action_space.low, self.action_space.high)
-            new_obs, rewards, dones, infos = env.step(clipped_actions)
-            # TODO : investigate why no environment fail early?
-            n_steps += num_envs
-
-            if isinstance(self.action_space, spaces.Discrete):
-                # Reshape in case of discrete action
-                actions = actions.reshape(-1, 1)
-
-            # Handle timeout by bootstraping with value function
-            # see GitHub issue #633
-            for idx, done in enumerate(dones):
-                if (
-                    done
-                    and infos[idx].get("terminal_observation") is not None
-                    and infos[idx].get("TimeLimit.truncated", False)
-                ):
-                    terminal_obs = self.policy.obs_to_tensor(infos[idx]["terminal_observation"])[0]
-                    with th.no_grad():
-                        terminal_value = self.policy.predict_values(terminal_obs)[0]  # type: ignore[arg-type]
-                    rewards[idx] += self.gamma * terminal_value
-            evaluation_rollout_buffer.add(
-                _last_obs,  # type: ignore[arg-type]
-                actions,
-                rewards,
-                _last_episode_starts,  # type: ignore[arg-type]
-            )
-
-            _last_obs = new_obs  # type: ignore[assignment]
-            _last_episode_starts = dones
-
-        evaluation_rollout_buffer.compute_returns_and_advantage(dones=dones)
-
-        return evaluation_rollout_buffer

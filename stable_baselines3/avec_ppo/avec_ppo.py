@@ -10,18 +10,11 @@ from stable_baselines3.common.on_policy_algorithm import AvecOnPolicyAlgorithm, 
 from stable_baselines3.common.policies import ActorCriticCnnPolicy, ActorCriticPolicy, BasePolicy, MultiInputActorCriticPolicy
 from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedule
 from stable_baselines3.common.utils import explained_variance, get_schedule_fn
+from stable_baselines3.common.avec_utils import get_grad_from_net
 
 SelfPPO = TypeVar("SelfPPO", bound="AVEC_PPO")
 
 import pdb
-
-
-def get_grad_from_net(net) -> list:
-    grads = []
-
-    for parameter in net.parameters():
-        grads.append(parameter.grad)
-    return grads
 
 
 from torchmetrics.functional import pairwise_cosine_similarity
@@ -123,6 +116,8 @@ class AVEC_PPO(AvecOnPolicyAlgorithm):
         n_eval_timesteps: int = int(1e6),
         n_samples_MC: int = 100,
         n_eval_envs: int = 32,
+        grads_folder: str = "grads",
+        value_folder: str = "values",
     ):
         self.env_name = env_name
         super().__init__(
@@ -157,6 +152,8 @@ class AVEC_PPO(AvecOnPolicyAlgorithm):
             n_eval_rollout_steps=n_eval_timesteps,
             n_samples_MC=n_samples_MC,
             n_eval_rollout_envs=n_eval_envs,
+            grads_folder=grads_folder,
+            value_folder=value_folder,
         )
 
         # Sanity check, otherwise it will lead to noisy gradient and NaN
