@@ -7,6 +7,7 @@ from stable_baselines3.dqn import DQN
 from stable_baselines3.her.her_replay_buffer import HerReplayBuffer
 from stable_baselines3.ppo import PPO
 from stable_baselines3.avec_ppo import AVEC_PPO
+from stable_baselines3.avec_sac import AVEC_SAC
 from stable_baselines3.sac import SAC
 from stable_baselines3.td3 import TD3
 
