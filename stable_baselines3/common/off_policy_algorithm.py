@@ -749,9 +749,13 @@ class AvecOffPolicyAlgorithm(BaseAlgorithm):
         self.value_errors = []
         self.normalized_value_errors = []
         self.predicted_values = []
+        self.predicted_alternate_values = []
+        self.alternate_value_errors = []
+        self.alternate_normalized_value_errors = []
         self.true_values = []
         self.MC_values = []
         self.previous_buffer_size = 0
+        self.alternate_critic = None
 
         # Save train freq parameter, will be converted later to TrainFreq object
         self.train_freq = train_freq
@@ -1282,29 +1286,48 @@ class AvecOffPolicyAlgorithm(BaseAlgorithm):
             ent_coef = th.exp(self.log_ent_coef.detach())
             values = values - ent_coef * value_log_prob
 
+            if self.alternate_critic is not None:
+                alternate_values = th.cat(self.alternate_critic(th.Tensor(self._last_obs), th.Tensor(value_action)), dim=1)
+                alternate_values, _ = th.min(values, dim=1, keepdim=True)
+                alternate_values = alternate_values - ent_coef * value_log_prob
+            else:
+                alternate_values = None
+
             # Rescale and perform action
             new_obs, rewards, dones, infos = env.step(actions)
             if update:
                 self.num_timesteps += env.num_envs
             if (self.num_timesteps in self.samples) and value_function_eval:
                 action_for_q_values, _ = self.actor.action_log_prob(th.Tensor(self._last_obs))
-                self.predicted_values, self.true_values, self.value_errors, self.normalized_value_errors, self.MC_values = (
-                    evaluate_value_function(
-                        self,
-                        env,
-                        n_flags,
-                        number_of_flags,
-                        alpha,
-                        num_collected_steps,
-                        self.predicted_values,
-                        values,
-                        self.true_values,
-                        self.value_errors,
-                        self.MC_values,
-                        self.normalized_value_errors,
-                        TRUE_ALGO_NAME,
-                        action=action_for_q_values,
-                    )
+                # (
+                #     self.predicted_values,
+                #     self.true_values,
+                #     self.value_errors,
+                #     self.normalized_value_errors,
+                #     self.MC_values,
+                #     self.predicted_alternate_values,
+                #     self.alternate_value_errors,
+                #     self.alternate_normalized_value_errors
+                # )
+                evaluate_value_function(
+                    self,
+                    env,
+                    n_flags,
+                    number_of_flags,
+                    alpha,
+                    num_collected_steps,
+                    self.predicted_values,
+                    values,
+                    self.true_values,
+                    self.value_errors,
+                    self.MC_values,
+                    self.normalized_value_errors,
+                    TRUE_ALGO_NAME,
+                    action=action_for_q_values,
+                    alternate_values=alternate_values,
+                    predicted_alternate_values=self.predicted_alternate_values,
+                    alternate_value_errors=self.alternate_value_errors,
+                    alternate_normalized_value_errors=self.alternate_normalized_value_errors,
                 )
             num_collected_steps += 1
             if update:
@@ -1348,7 +1371,7 @@ class AvecOffPolicyAlgorithm(BaseAlgorithm):
                 next_actions, next_log_prob = self.actor.action_log_prob(th.Tensor(replay_buffer.next_observations))
                 # Compute the next Q values: min over all critics targets
                 next_q_values = th.cat(
-                    self.critic_target(th.Tensor(replay_buffer.next_observations), next_actions),
+                    self.critic(th.Tensor(replay_buffer.next_observations), next_actions),
                     dim=1,
                 )
                 next_q_values, _ = th.min(next_q_values, dim=1, keepdim=True)
@@ -1364,7 +1387,7 @@ class AvecOffPolicyAlgorithm(BaseAlgorithm):
             current_actions, current_log_prob = self.actor.action_log_prob(th.Tensor(replay_buffer.observations))
 
             current_q_values = th.cat(
-                self.critic_target(
+                self.critic(
                     th.Tensor(replay_buffer.next_observations),
                     th.Tensor(current_actions).reshape(self.buffer_size, self.action_space.shape[0]),
                 ),
@@ -1374,6 +1397,32 @@ class AvecOffPolicyAlgorithm(BaseAlgorithm):
             # add entropy term
             current_q_values = current_q_values - ent_coef * current_log_prob.reshape(-1, 1)
             deltas = target_q_values - current_q_values.detach().numpy()
+            if self.alternate_critic is not None:
+                with th.no_grad():
+                    # Compute the next Q values: min over all critics targets
+                    alternate_next_q_values = th.cat(
+                        self.alternate_critic(th.Tensor(replay_buffer.next_observations), next_actions),
+                        dim=1,
+                    )
+                    alternate_next_q_values, _ = th.min(alternate_next_q_values, dim=1, keepdim=True)
+                    # add entropy term
+                    alternate_next_q_values = alternate_next_q_values - ent_coef * next_log_prob.reshape(-1, 1)
+                    # td error + entropy term
+                    alternate_target_q_values = (
+                        replay_buffer.rewards
+                        + (1 - replay_buffer.dones) * self.gamma * alternate_next_q_values.detach().numpy()
+                    )
+                alternate_current_q_values = th.cat(
+                    self.alternate_critic(
+                        th.Tensor(replay_buffer.next_observations),
+                        th.Tensor(current_actions).reshape(self.buffer_size, self.action_space.shape[0]),
+                    ),
+                    dim=1,
+                )  # TODO : mask for only the non zero values?
+                alternate_current_q_values, _ = th.min(alternate_current_q_values, dim=1, keepdim=True)
+                # add entropy term
+                alternate_current_q_values = alternate_current_q_values - ent_coef * current_log_prob.reshape(-1, 1)
+                alternate_deltas = alternate_target_q_values - alternate_current_q_values.detach().numpy()
             ranking_and_error_logging(
                 self,
                 predicted_values=self.predicted_values,
@@ -1381,12 +1430,19 @@ class AvecOffPolicyAlgorithm(BaseAlgorithm):
                 deltas=deltas,
                 normalized_value_errors=self.normalized_value_errors,
                 value_errors=self.value_errors,
+                alternate_deltas=alternate_deltas,
+                alternate_values=self.predicted_alternate_values,
+                alternate_value_errors=self.alternate_value_errors,
+                alternate_normalized_value_errors=self.alternate_normalized_value_errors,
             )
             self.value_errors = []
             self.normalized_value_errors = []
             self.predicted_values = []
             self.true_values = []
             self.MC_values = []
+            self.predicted_alternate_values = []
+            self.alternate_value_errors = []
+            self.alternate_normalized_value_errors = []
 
         if update:
             callback.on_rollout_end()

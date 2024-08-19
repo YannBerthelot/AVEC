@@ -588,6 +588,10 @@ def evaluate_value_function(
     normalized_value_errors,
     true_algo_name,
     action=None,
+    alternate_values=None,
+    predicted_alternate_values=None,
+    alternate_value_errors=None,
+    alternate_normalized_value_errors=None,
 ):
     self.num_eval_timesteps += 1
 
@@ -603,6 +607,12 @@ def evaluate_value_function(
     value_error = (true_value - values.detach().numpy()) ** 2
     value_errors.append(value_error)
     normalized_value_errors.append(value_error / (MC_values.mean(axis=0) ** 2))
+
+    if alternate_values is not None:
+        predicted_alternate_values.append(alternate_values.detach().numpy()[0])
+        alternate_value_error = (true_value - alternate_values.detach().numpy()) ** 2
+        alternate_value_errors.append(alternate_value_error)
+        alternate_normalized_value_errors.append(alternate_value_error / (MC_values.mean(axis=0) ** 2))
 
     # self.logger.record("MC/MC episode mean length", np.mean(MC_episode_lengths))
     # self.logger.record("MC/MC episode std length", np.std(MC_episode_lengths))
@@ -620,18 +630,41 @@ def evaluate_value_function(
     # self.logger.record("errors/normalized error mean (bias)", np.mean(normalized_value_errors))
     # self.logger.record("errors/normalized error std", np.std(normalized_value_errors))
     # self.logger.dump(step=self.num_timesteps)
-    return predicted_values, true_values, value_errors, normalized_value_errors, MC_values
+    return (
+        predicted_values,
+        true_values,
+        value_errors,
+        normalized_value_errors,
+        MC_values,
+        predicted_alternate_values,
+        alternate_value_errors,
+        alternate_normalized_value_errors,
+    )
 
 
-def ranking_and_error_logging(self, predicted_values, true_values, deltas, normalized_value_errors, value_errors):
+def ranking_and_error_logging(
+    self,
+    predicted_values,
+    true_values,
+    deltas,
+    normalized_value_errors,
+    value_errors,
+    alternate_values=None,
+    alternate_value_errors=None,
+    alternate_normalized_value_errors=None,
+    alternate_deltas=None,
+):
     kendal_tau = kendalltau(np.array(predicted_values), np.array(true_values))
     kendal_tau_stat = kendal_tau.statistic
     assert not np.isnan(kendal_tau_stat), f"{predicted_values=} {true_values=}"
     self.logger.record("ranking/Kendal Tau statistic", kendal_tau_stat)
     self.logger.record("ranking/Kendal Tau p-value", kendal_tau.pvalue)
+
     if deltas is not None:
         self.logger.record("errors/value estimation error mean", abs(np.mean(deltas)))
         self.logger.record("errors/value estimation error std", np.std(deltas))
+        error_difference = np.mean((np.mean(value_errors) - np.mean(deltas)) ** 2)
+        self.logger.record("errors/errors difference", error_difference)
 
     self.logger.record("errors/normalized value approximation error mean", np.mean(normalized_value_errors))
     self.logger.record("errors/normalized value approximation error std", np.std(normalized_value_errors))
@@ -642,9 +675,31 @@ def ranking_and_error_logging(self, predicted_values, true_values, deltas, norma
     self.logger.record("values/predicted value std", np.std(predicted_values))
     self.logger.record("values/true value mean", np.mean(true_values))
     self.logger.record("values/true value std", np.std(true_values))
-    if deltas is not None:
-        error_difference = np.mean((np.mean(value_errors) - np.mean(deltas)) ** 2)
-        self.logger.record("errors/errors difference", error_difference)
+
+    if alternate_values is not None:
+        kendal_tau = kendalltau(np.array(alternate_values), np.array(true_values))
+        kendal_tau_stat = kendal_tau.statistic
+        assert not np.isnan(kendal_tau_stat), f"{alternate_values=} {true_values=}"
+        self.logger.record("ranking/alternate Kendal Tau statistic", kendal_tau_stat)
+        self.logger.record("ranking/alternate Kendal Tau p-value", kendal_tau.pvalue)
+        if alternate_deltas is not None:
+            self.logger.record("errors/alternate value estimation error mean", abs(np.mean(alternate_deltas)))
+            self.logger.record("errors/alternate value estimation error std", np.std(alternate_deltas))
+            error_difference = np.mean((np.mean(alternate_value_errors) - np.mean(alternate_deltas)) ** 2)
+            self.logger.record("errors/alternate errors difference", error_difference)
+
+        self.logger.record(
+            "errors/alternate normalized value approximation error mean", np.mean(alternate_normalized_value_errors)
+        )
+        self.logger.record(
+            "errors/alternate normalized value approximation error std", np.std(alternate_normalized_value_errors)
+        )
+        self.logger.record("errors/alternate value approximation error mean", np.mean(alternate_value_errors))
+        self.logger.record("errors/alternate value approximation error std", np.std(alternate_value_errors))
+
+        self.logger.record("values/alternate predicted value mean", np.mean(alternate_values))
+        self.logger.record("values/alternate predicted value std", np.std(alternate_values))
+
     self.logger.dump(step=self.num_timesteps)
 
 

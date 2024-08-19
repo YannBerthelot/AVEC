@@ -117,7 +117,7 @@ if __name__ == "__main__":
             )
 
     run = wandb.init(
-        project="avec experiments ranking local",
+        project="avec experiments sac",
         sync_tensorboard=True,
         config={
             "agent": mode,
@@ -155,7 +155,6 @@ if __name__ == "__main__":
         hyperparams["n_eval_envs"] = N_EVAL_ENVS
         if mode == "AVEC_SAC":
             agent = AVEC_SAC
-            hyperparams["learning_starts"] = 100
         elif mode == "CORRECTED_AVEC_SAC":
             hyperparams["correction"] = True
             agent = AVEC_SAC
