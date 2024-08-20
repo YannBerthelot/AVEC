@@ -280,10 +280,16 @@ def evaluate_and_log_grads(
         pairwise_similarities.append(np.mean(pairwise_cosine_sim))
         avec_pairwise_similarities.append(np.mean(avec_pairwise_cosine_sim))
     if num_rollout == 1:  # TODO : check that it goes as intended
-        self.train(update=False, batch_size=self.batch_size, gradient_steps=1, alpha=self.alpha)
+        if "PPO" in self.true_algo_name:
+            self.train(update=False, n_epochs=1, alpha=self.alpha)
+        else:
+            self.train(update=False, batch_size=self.batch_size, gradient_steps=1, alpha=self.alpha)
         true_gradient_pairwise_cosine_sim = compute_pairwise_from_grads(self.grads, true_grads)
         average_true_gradient_pairwise_cosine_sim = np.mean(true_gradient_pairwise_cosine_sim)
-        self.train(update=False, batch_size=self.batch_size, gradient_steps=1, alpha=0.0)
+        if "PPO" in self.true_algo_name:
+            self.train(update=False, n_epochs=1, alpha=self.alpha)
+        else:
+            self.train(update=False, batch_size=self.batch_size, gradient_steps=1, alpha=self.alpha)
         avec_true_gradient_pairwise_cosine_sim = compute_pairwise_from_grads(self.grads, true_grads)
         avec_average_true_gradient_pairwise_cosine_sim = np.mean(avec_true_gradient_pairwise_cosine_sim)
         avec_avec_true_gradient_pairwise_cosine_sim = compute_pairwise_from_grads(self.grads, avec_true_grads)
