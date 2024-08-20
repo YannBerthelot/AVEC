@@ -203,8 +203,8 @@ def get_true_grads_from_policy(self, alpha: float, env_name: str, num_envs: int 
         self.collect_rollouts(
             env=env,
             callback=None,
-            n_steps=n_rollout_steps,
-            replay_buffer=rollout_buffer,
+            n_rollout_steps=n_rollout_steps,
+            rollout_buffer=rollout_buffer,
             flag=False,
             update=False,
             value_function_eval=False,
@@ -223,8 +223,8 @@ def get_true_grads_from_policy(self, alpha: float, env_name: str, num_envs: int 
         self.collect_rollouts(
             env=env,
             callback=None,
-            n_rollout_steps=n_rollout_steps,
-            rollout_buffer=rollout_buffer,
+            train_freq=n_rollout_steps,
+            replay_buffer=rollout_buffer,
             flag=False,
             update=False,
             value_function_eval=False,
