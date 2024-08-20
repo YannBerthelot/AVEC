@@ -203,7 +203,7 @@ def get_true_grads_from_policy(self, alpha: float, env_name: str, num_envs: int 
         self.collect_rollouts(
             env=env,
             callback=None,
-            train_freq=n_rollout_steps,
+            n_steps=n_rollout_steps,
             replay_buffer=rollout_buffer,
             flag=False,
             update=False,
@@ -223,8 +223,8 @@ def get_true_grads_from_policy(self, alpha: float, env_name: str, num_envs: int 
         self.collect_rollouts(
             env=env,
             callback=None,
-            train_freq=n_rollout_steps,
-            replay_buffer=rollout_buffer,
+            n_rollout_steps=n_rollout_steps,
+            rollout_buffer=rollout_buffer,
             flag=False,
             update=False,
             value_function_eval=False,
@@ -312,9 +312,6 @@ def compute_true_values(self, state, action=None):
             state,
             n_rollout_steps=ceil(self.n_eval_rollout_steps / self.n_eval_rollout_envs),
         )
-        import pdb
-
-        pdb.set_trace()
     else:
         assert action is not None, f"action is none for sac : {action=}"
         eval_buffer = collect_rollouts_MC_from_state_and_actions(
