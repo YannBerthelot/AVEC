@@ -28,8 +28,8 @@ SelfOnPolicyAlgorithm = TypeVar("SelfOnPolicyAlgorithm", bound="OnPolicyAlgorith
 
 
 N_GRADIENT_ROLLOUTS = 10
-VALUE_FUNCTION_EVAL = False
-GRAD_EVAL = True
+VALUE_FUNCTION_EVAL = True
+GRAD_EVAL = False
 TRUE_ALGO_NAME = "PPO"
 number_of_flags = 10
 
