@@ -33,7 +33,7 @@ from numpy.random import default_rng
 SelfOffPolicyAlgorithm = TypeVar("SelfOffPolicyAlgorithm", bound="OffPolicyAlgorithm")
 
 N_GRADIENT_ROLLOUTS = 10
-VALUE_FUNCTION_EVAL = True
+VALUE_FUNCTION_EVAL = False
 GRAD_EVAL = False
 TRUE_ALGO_NAME = "SAC"
 number_of_flags = 10

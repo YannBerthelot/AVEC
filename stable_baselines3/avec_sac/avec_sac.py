@@ -18,6 +18,8 @@ from copy import deepcopy
 
 SelfSAC = TypeVar("SelfSAC", bound="AVEC_SAC")
 
+COMPARE_VALUE = False
+
 
 class AVEC_SAC(AvecOffPolicyAlgorithm):
     """
@@ -278,7 +280,15 @@ class AVEC_SAC(AvecOffPolicyAlgorithm):
             # Get current Q-values estimates for each critic network
             # using action from the replay buffer
             current_q_values = self.critic(replay_data.observations, replay_data.actions)
-
+            # Compute correction term here?
+            if self.correction:
+                with th.no_grad():
+                    q_values_correction = th.cat(self.critic_target(replay_data.observations, replay_data.actions), dim=1)
+                    q_values_correction, _ = th.min(q_values_correction, dim=1, keepdim=True)
+                    q_values_correction = q_values_correction - ent_coef * next_log_prob.reshape(-1, 1)
+                    correction_term = (1 - 2 * self.alpha) / (1 - self.alpha) * th.mean(q_values_correction - next_q_values)
+            else:
+                correction_term = 0
             # Compute critic loss
             # critic_loss = 0.5 * sum(F.mse_loss(current_q, target_q_values) for current_q in current_q_values)
             # # critic_loss = MSE
@@ -287,40 +297,41 @@ class AVEC_SAC(AvecOffPolicyAlgorithm):
 
             critic_loss = 0.5 * sum(
                 (1 - alpha) * th.var(current_q - target_q_values, unbiased=False)
-                + alpha * th.mean(th.square(current_q - target_q_values))
+                + alpha * th.square(th.mean(current_q - target_q_values))
                 for current_q in current_q_values
             )
-            alternate_current_q_values = (current_q.clone() for current_q in current_q_values)
-            alternate_target_q_values = target_q_values.clone()
-            alternate_critic_loss = 0.5 * sum(
-                (1 - alternate_alpha) * th.var(current_q - alternate_target_q_values, unbiased=False)
-                + alternate_alpha * th.mean(th.square(current_q - alternate_target_q_values))
-                for current_q in alternate_current_q_values
-            )
+            # critic_loss = 0.5 * sum(F.mse_loss(current_q, target_q_values) for current_q in current_q_values)
+            # if COMPARE_VALUE:
+            #     alternate_current_q_values = (current_q.clone() for current_q in current_q_values)
+            #     alternate_target_q_values = target_q_values.clone()
+            #     alternate_critic_loss = 0.5 * sum(
+            #         (1 - alternate_alpha) * th.var(current_q - alternate_target_q_values, unbiased=False)
+            #         + alternate_alpha * th.square(th.mean(current_q - alternate_target_q_values))
+            #         for current_q in alternate_current_q_values
+            #     )
+            #     alternate_critic_losses.append(alternate_critic_loss.item())  # type: ignore[union-attr]
             assert isinstance(critic_loss, th.Tensor)  # for type checker
             critic_losses.append(critic_loss.item())  # type: ignore[union-attr]
-            alternate_critic_losses.append(alternate_critic_loss.item())  # type: ignore[union-attr]
 
             # Optimize the critic
             self.critic.optimizer.zero_grad()
-            self.alternate_critic.optimizer.zero_grad()
-            COMPARE_VALUE = True
-            if COMPARE_VALUE:  # TODO : check how anormal are outliers in the reward?
-                self.alternate_critic.optimizer.zero_grad()
-                alternate_critic_loss.backward()
-
+            critic_loss.backward()
             grads = get_grad_from_net(self.critic)
             if update:
+
                 self.critic.optimizer.step()
-                if COMPARE_VALUE:
-                    self.alternate_critic.optimizer.step()
+                # if COMPARE_VALUE:
+                #     self.alternate_critic.optimizer.zero_grad()
+                #     alternate_critic_loss.backward()
+                #     self.alternate_critic.optimizer.step()
 
             # Compute actor loss
             # Alternative: actor_loss = th.mean(log_prob - qf1_pi)
             # Min over all critic networks
             q_values_pi = th.cat(self.critic(replay_data.observations, actions_pi), dim=1)
             min_qf_pi, _ = th.min(q_values_pi, dim=1, keepdim=True)
-            actor_loss = (ent_coef * log_prob - min_qf_pi).mean()
+            corrected_min_qf_pi = min_qf_pi + correction_term
+            actor_loss = (ent_coef * log_prob - corrected_min_qf_pi).mean()
             actor_losses.append(actor_loss.item())
 
             # Optimize the actor
@@ -331,10 +342,12 @@ class AVEC_SAC(AvecOffPolicyAlgorithm):
                 self.actor.optimizer.step()
 
             # Update target networks
-            if gradient_step % self.target_update_interval == 0:
-                polyak_update(self.critic.parameters(), self.critic_target.parameters(), self.tau)
-                # Copy running stats, see GH issue #996
-                polyak_update(self.batch_norm_stats, self.batch_norm_stats_target, 1.0)
+            if update:
+                if gradient_step % self.target_update_interval == 0:
+                    polyak_update(self.critic.parameters(), self.critic_target.parameters(), self.tau)
+                    # Copy running stats, see GH issue #996
+                    polyak_update(self.batch_norm_stats, self.batch_norm_stats_target, 1.0)
+                    # TODO : add the alternate
         if update:
             self._n_updates += gradient_steps
 

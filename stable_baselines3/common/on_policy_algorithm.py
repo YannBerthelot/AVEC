@@ -565,7 +565,7 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
                     value_errors,
                     MC_values,
                     normalized_value_errors,
-                    TRUE_ALGO_NAME,
+                    TRUE_ALGO_NAME,  # FIXME : Adapt for alternate results
                 )
 
             # Give access to local variables

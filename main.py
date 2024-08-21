@@ -114,6 +114,7 @@ if __name__ == "__main__":
         else:  # SAC
             hyperparams["policy_kwargs"] = dict(
                 net_arch=dict(pi=[256, 256], qf=[int(256 * network_size_factor), int(256 * network_size_factor)]),
+                activation_fn=nn.ReLU,
             )
 
     run = wandb.init(
@@ -147,7 +148,7 @@ if __name__ == "__main__":
             agent = AVEC_PPO
     elif mode == "SAC":
         agent = SAC
-    elif mode == "AVEC_SAC":  # or (mode == "CORRECTED_AVEC_PPO"):
+    elif "AVEC_SAC" in mode:  # or (mode == "CORRECTED_AVEC_PPO"):
         hyperparams["env_name"] = env_name
         hyperparams["alpha"] = alpha
         hyperparams["n_eval_timesteps"] = N_EVAL_TIMESTEPS

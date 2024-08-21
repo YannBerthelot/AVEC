@@ -585,8 +585,11 @@ class AvecRolloutBuffer(BaseBuffer):
         self.generator_ready = False
         super().reset()
 
-    def unbiase_values(self, current_values, old_returns):
-        return current_values + (1 - 2 * self.alpha) / (1 - self.alpha) * np.mean(old_returns - current_values)
+    def unbiase_values(self, value):
+        return value + self.correction_term
+
+    def compute_correction_term(self, old_returns, current_values):
+        return (1 - 2 * self.alpha) / (1 - self.alpha) * np.mean(old_returns - current_values)
 
     def compute_returns_and_advantage(self, last_values: th.Tensor, dones: np.ndarray) -> None:
         """
@@ -611,13 +614,14 @@ class AvecRolloutBuffer(BaseBuffer):
         last_values = last_values.clone().cpu().numpy().flatten()  # type: ignore[assignment]
         last_gae_lam = 0
         if self.correction:
-            unbiased_values = self.unbiase_values(self.values, self.returns)
+            correction_term = self.compute_correction_term(current_values=self.values, old_returns=self.returns)
         else:
-            unbiased_values = self.values
+            correction_term = 0
+        unbiased_values = self.unbiase_values(self.values, correction_term)
         for step in reversed(range(self.buffer_size)):
             if step == self.buffer_size - 1:
                 next_non_terminal = 1.0 - dones.astype(np.float32)
-                next_values = last_values
+                next_values = self.unbiase_values(last_values, correction_term)
             else:
                 next_non_terminal = 1.0 - self.episode_starts[step + 1]
                 next_values = unbiased_values[step + 1]
