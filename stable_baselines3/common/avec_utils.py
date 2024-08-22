@@ -15,12 +15,7 @@ from gymnasium import spaces
 from copy import deepcopy
 from stable_baselines3.common.utils import obs_as_tensor
 from scipy.stats import kendalltau
-from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, RolloutReturn, Schedule, TrainFreq, TrainFrequencyUnit
-from stable_baselines3.common.utils import should_collect_more_steps
-from stable_baselines3.common.vec_env import VecEnv
-from stable_baselines3.common.buffers import DictReplayBuffer, ReplayBuffer
-from stable_baselines3.common.callbacks import BaseCallback
-from stable_baselines3.common.noise import ActionNoise, VectorizedActionNoise
+from stable_baselines3.common.type_aliases import RolloutReturn
 
 
 def compute_pairwise_from_grads(grads_1, grads_2) -> list:
@@ -46,6 +41,7 @@ def get_state(env):
 def save_to_pickle(obj, filename):
     with open(f"{filename}.pkl", "wb") as handle:
         pickle.dump(obj, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    return f"{filename}.pkl"
 
 
 def read_from_pickle(filename):
@@ -540,7 +536,7 @@ def collect_rollouts_MC_from_state_and_actions(
         # Rescale and perform action
         num_actions = len(actions)
         actual_actions = np.array(
-            [first_actions.detach().numpy()[0] if _last_episode_starts[i] else actions[i] for i in range(num_actions)]
+            [first_actions[0] if _last_episode_starts[i] else actions[i] for i in range(num_actions)]
         ).reshape(num_envs, self.action_space.shape[0])
 
         new_obs, rewards, dones, infos = env.step(actual_actions)
@@ -578,30 +574,18 @@ def collect_rollouts_MC_from_state_and_actions(
 
 def evaluate_value_function(
     self,
-    env,
+    state,
     n_flags,
     number_of_flags,
     alpha,
     n_steps,
-    predicted_values,
-    values,
-    true_values,
-    value_errors,
-    MC_values,
-    normalized_value_errors,
     true_algo_name,
     action=None,
-    alternate_values=None,
-    predicted_alternate_values=None,
-    alternate_value_errors=None,
-    alternate_normalized_value_errors=None,
 ):
-    self.num_eval_timesteps += 1
-
-    state = get_state(env)
     states_values_MC, MC_episode_lengths, nb_full_episodes = compute_or_load_true_values(
         self, state, n_flags, number_of_flags, alpha, state_idx=n_steps, true_algo_name=true_algo_name, action=action
     )  # TODO : adapt for q values
+    return states_values_MC.mean(axis=0)
     assert (np.sum(np.isnan(states_values_MC)) == 0) and len(states_values_MC) > 0, f"{states_values_MC=}"
     MC_values = np.concatenate((MC_values, states_values_MC), axis=None)
     predicted_values.append(values.detach().numpy()[0])
@@ -610,38 +594,12 @@ def evaluate_value_function(
     value_error = (true_value - values.detach().numpy()) ** 2
     value_errors.append(value_error)
     normalized_value_errors.append(value_error / (MC_values.mean(axis=0) ** 2))
-
-    if alternate_values is not None:
-        predicted_alternate_values.append(alternate_values.detach().numpy()[0])
-        alternate_value_error = (true_value - alternate_values.detach().numpy()) ** 2
-        alternate_value_errors.append(alternate_value_error)
-        alternate_normalized_value_errors.append(alternate_value_error / (MC_values.mean(axis=0) ** 2))
-
-    # self.logger.record("MC/MC episode mean length", np.mean(MC_episode_lengths))
-    # self.logger.record("MC/MC episode std length", np.std(MC_episode_lengths))
-    # self.logger.record("MC/number of complete trajectories", nb_full_episodes)
-    # self.logger.record("value/value MC mean", np.mean(MC_values))
-    # self.logger.record("value/value MC std", np.std(MC_values))
-    # self.logger.record("value/value std (variance)", np.std(predicted_values))
-    # self.logger.record(
-    #     "value/normalized value std (variance)", np.std(predicted_values) / np.mean(predicted_values)
-    # )
-    # self.logger.record("value/value mean", np.mean(predicted_values))
-    # self.logger.record("value/eval step", self.num_eval_timesteps)
-    # self.logger.record("errors/error std", np.std(value_errors))
-    # self.logger.record("errors/error mean (bias)", np.mean(value_errors))
-    # self.logger.record("errors/normalized error mean (bias)", np.mean(normalized_value_errors))
-    # self.logger.record("errors/normalized error std", np.std(normalized_value_errors))
-    # self.logger.dump(step=self.num_timesteps)
     return (
         predicted_values,
         true_values,
         value_errors,
         normalized_value_errors,
         MC_values,
-        predicted_alternate_values,
-        alternate_value_errors,
-        alternate_normalized_value_errors,
     )
 
 

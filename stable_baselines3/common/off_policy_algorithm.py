@@ -6,11 +6,11 @@ import time
 import warnings
 from copy import deepcopy
 from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union
-
+from tqdm import tqdm
 import numpy as np
 import torch as th
 from gymnasium import spaces
-
+from wandb.integration.sb3 import WandbCallback
 from stable_baselines3.common.base_class import BaseAlgorithm
 from stable_baselines3.common.buffers import DictReplayBuffer, ReplayBuffer
 from stable_baselines3.common.callbacks import BaseCallback
@@ -27,6 +27,7 @@ from stable_baselines3.common.avec_utils import (
     evaluate_and_log_grads,
     evaluate_value_function,
     ranking_and_error_logging,
+    get_state,
 )
 from numpy.random import default_rng
 
@@ -363,6 +364,7 @@ class OffPolicyAlgorithm(BaseAlgorithm):
                     self.train(batch_size=self.batch_size, gradient_steps=gradient_steps)
 
         callback.on_training_end()
+        self.states = []
 
         return self
 
@@ -1259,15 +1261,14 @@ class AvecOffPolicyAlgorithm(BaseAlgorithm):
             callback.on_rollout_start()
         continue_training = True
 
-        if flag and (self.num_timesteps > self.learning_starts):
-            if replay_buffer.size() != deepcopy(self.previous_buffer_size):
-                delta = replay_buffer.size() - deepcopy(self.previous_buffer_size)
-            rng = default_rng(self.seed)
-            possibles_timesteps = list(range(replay_buffer.size(), replay_buffer.size() + delta, env.num_envs))
-            self.samples = rng.choice(
-                possibles_timesteps, self.n_samples_MC
-            )  # TODO : find how to handle with update at each step
-            self.previous_buffer_size = replay_buffer.size()
+        # if flag and (self.num_timesteps >= learning_starts):
+        #     rng = default_rng(self.seed)
+        #     replay_buffer_size = np.nonzero(replay_buffer.rewards)[0][-1]
+        #     delta = self.num_timesteps / n_flags
+        #     possibles_timesteps = list(range(replay_buffer_size, replay_buffer_size + delta, env.num_envs))
+        #     self.samples = rng.choice(
+        #         possibles_timesteps, self.n_samples_MC
+        #     )  # TODO : find how to handle with update at each step
 
         if n_rollout_steps is not None:
             train_freq = TrainFreq(n_rollout_steps, unit=TrainFrequencyUnit.STEP)
@@ -1279,56 +1280,57 @@ class AvecOffPolicyAlgorithm(BaseAlgorithm):
 
             # Select action randomly or according to policy
             actions, buffer_actions = self._sample_action(learning_starts, action_noise, env.num_envs)
-            value_action, value_log_prob = self.actor.action_log_prob(th.Tensor(self._last_obs))
-            # Compute the next Q values: min over all critics targets
-            values = th.cat(self.critic(th.Tensor(self._last_obs), th.Tensor(value_action)), dim=1)
-            values, _ = th.min(values, dim=1, keepdim=True)
-            ent_coef = th.exp(self.log_ent_coef.detach())
-            values = values - ent_coef * value_log_prob
+            # value_action, value_log_prob = self.actor.action_log_prob(th.Tensor(self._last_obs))
+            # # Compute the next Q values: min over all critics targets
+            # values = th.cat(self.critic(th.Tensor(self._last_obs), th.Tensor(value_action)), dim=1)
+            # values, _ = th.min(values, dim=1, keepdim=True)
+            # ent_coef = th.exp(self.log_ent_coef.detach())
+            # values = values - ent_coef * value_log_prob
 
-            if self.alternate_critic is not None:
-                alternate_values = th.cat(self.alternate_critic(th.Tensor(self._last_obs), th.Tensor(value_action)), dim=1)
-                alternate_values, _ = th.min(values, dim=1, keepdim=True)
-                alternate_values = alternate_values - ent_coef * value_log_prob
-            else:
-                alternate_values = None
+            # if self.alternate_critic is not None:
+            #     alternate_values = th.cat(self.alternate_critic(th.Tensor(self._last_obs), th.Tensor(value_action)), dim=1)
+            #     alternate_values, _ = th.min(values, dim=1, keepdim=True)
+            #     alternate_values = alternate_values - ent_coef * value_log_prob
+            # else:
+            #     alternate_values = None
 
             # Rescale and perform action
             new_obs, rewards, dones, infos = env.step(actions)
+            self.states.append(get_state(env))
             if update:
                 self.num_timesteps += env.num_envs
-            if (self.num_timesteps in self.samples) and value_function_eval:
-                action_for_q_values, _ = self.actor.action_log_prob(th.Tensor(self._last_obs))
-                # (
-                #     self.predicted_values,
-                #     self.true_values,
-                #     self.value_errors,
-                #     self.normalized_value_errors,
-                #     self.MC_values,
-                #     self.predicted_alternate_values,
-                #     self.alternate_value_errors,
-                #     self.alternate_normalized_value_errors
-                # )
-                evaluate_value_function(
-                    self,
-                    env,
-                    n_flags,
-                    number_of_flags,
-                    alpha,
-                    num_collected_steps,
-                    self.predicted_values,
-                    values,
-                    self.true_values,
-                    self.value_errors,
-                    self.MC_values,
-                    self.normalized_value_errors,
-                    TRUE_ALGO_NAME,
-                    action=action_for_q_values,
-                    alternate_values=alternate_values,
-                    predicted_alternate_values=self.predicted_alternate_values,
-                    alternate_value_errors=self.alternate_value_errors,
-                    alternate_normalized_value_errors=self.alternate_normalized_value_errors,
-                )
+            # if (self.num_timesteps in self.samples) and value_function_eval:
+            #     action_for_q_values, _ = self.actor.action_log_prob(th.Tensor(self._last_obs))
+            #     # (
+            #     #     self.predicted_values,
+            #     #     self.true_values,
+            #     #     self.value_errors,
+            #     #     self.normalized_value_errors,
+            #     #     self.MC_values,
+            #     #     self.predicted_alternate_values,
+            #     #     self.alternate_value_errors,
+            #     #     self.alternate_normalized_value_errors
+            #     # )
+            #     evaluate_value_function(
+            #         self,
+            #         env,
+            #         n_flags,
+            #         number_of_flags,
+            #         alpha,
+            #         num_collected_steps,
+            #         self.predicted_values,
+            #         values,
+            #         self.true_values,
+            #         self.value_errors,
+            #         self.MC_values,
+            #         self.normalized_value_errors,
+            #         TRUE_ALGO_NAME,
+            #         action=action_for_q_values,
+            #         alternate_values=alternate_values,
+            #         predicted_alternate_values=self.predicted_alternate_values,
+            #         alternate_value_errors=self.alternate_value_errors,
+            #         alternate_normalized_value_errors=self.alternate_normalized_value_errors,
+            #     )
             num_collected_steps += 1
             if update:
                 # Give access to local variables
@@ -1365,85 +1367,178 @@ class AvecOffPolicyAlgorithm(BaseAlgorithm):
                     if log_interval is not None and self._episode_num % log_interval == 0:
                         self._dump_logs()
         # print(self.num_timesteps, len(self.predicted_values), sorted(self.samples))
-        if value_function_eval and len(self.predicted_values) == self.n_samples_MC:
+        # if value_function_eval and len(self.predicted_values) == self.n_samples_MC:
+        #     with th.no_grad():
+        #         # Select action according to policy
+        #         next_actions, next_log_prob = self.actor.action_log_prob(th.Tensor(replay_buffer.next_observations))
+        #         # Compute the next Q values: min over all critics targets
+        #         next_q_values = th.cat(
+        #             self.critic(th.Tensor(replay_buffer.next_observations), next_actions),
+        #             dim=1,
+        #         )
+        #         next_q_values, _ = th.min(next_q_values, dim=1, keepdim=True)
+        #         # add entropy term
+        #         next_q_values = next_q_values - ent_coef * next_log_prob.reshape(-1, 1)
+        #         # td error + entropy term
+        #         target_q_values = (
+        #             replay_buffer.rewards + (1 - replay_buffer.dones) * self.gamma * next_q_values.detach().numpy()
+        #         )
+
+        #     # Get current Q-values estimates for each critic network
+        #     # using action from the replay buffer
+        #     current_actions, current_log_prob = self.actor.action_log_prob(th.Tensor(replay_buffer.observations))
+
+        #     current_q_values = th.cat(
+        #         self.critic(
+        #             th.Tensor(replay_buffer.observations),
+        #             th.Tensor(current_actions).reshape(self.buffer_size, self.action_space.shape[0]),
+        #         ),
+        #         dim=1,
+        #     )  # TODO : mask for only the non zero values?
+        #     current_q_values, _ = th.min(current_q_values, dim=1, keepdim=True)
+        #     # add entropy term
+        #     current_q_values = current_q_values - ent_coef * current_log_prob.reshape(-1, 1)
+        #     deltas = target_q_values - current_q_values.detach().numpy()
+        #     if self.alternate_critic is not None:
+        #         with th.no_grad():
+        #             # Compute the next Q values: min over all critics targets
+        #             alternate_next_q_values = th.cat(
+        #                 self.alternate_critic(th.Tensor(replay_buffer.next_observations), next_actions),
+        #                 dim=1,
+        #             )
+        #             alternate_next_q_values, _ = th.min(alternate_next_q_values, dim=1, keepdim=True)
+        #             # add entropy term
+        #             alternate_next_q_values = alternate_next_q_values - ent_coef * next_log_prob.reshape(-1, 1)
+        #             # td error + entropy term
+        #             alternate_target_q_values = (
+        #                 replay_buffer.rewards
+        #                 + (1 - replay_buffer.dones) * self.gamma * alternate_next_q_values.detach().numpy()
+        #             )
+        #         alternate_current_q_values = th.cat(
+        #             self.alternate_critic(
+        #                 th.Tensor(replay_buffer.next_observations),
+        #                 th.Tensor(current_actions).reshape(self.buffer_size, self.action_space.shape[0]),
+        #             ),
+        #             dim=1,
+        #         )  # TODO : mask for only the non zero values?
+        #         alternate_current_q_values, _ = th.min(alternate_current_q_values, dim=1, keepdim=True)
+        #         # add entropy term
+        #         alternate_current_q_values = alternate_current_q_values - ent_coef * current_log_prob.reshape(-1, 1)
+        #         alternate_deltas = alternate_target_q_values - alternate_current_q_values.detach().numpy()
+        #     ranking_and_error_logging(
+        #         self,
+        #         predicted_values=self.predicted_values,
+        #         true_values=self.true_values,
+        #         deltas=deltas,
+        #         normalized_value_errors=self.normalized_value_errors,
+        #         value_errors=self.value_errors,
+        #         alternate_deltas=alternate_deltas,
+        #         alternate_values=self.predicted_alternate_values,
+        #         alternate_value_errors=self.alternate_value_errors,
+        #         alternate_normalized_value_errors=self.alternate_normalized_value_errors,
+        #     )
+        #     self.value_errors = []
+        #     self.normalized_value_errors = []
+        #     self.predicted_values = []
+        #     self.true_values = []
+        #     self.MC_values = []
+        #     self.predicted_alternate_values = []
+        #     self.alternate_value_errors = []
+        #     self.alternate_normalized_value_errors = []
+
+        if update:
+            callback.on_rollout_end()
+        return RolloutReturn(num_collected_steps * env.num_envs, num_collected_episodes, continue_training)
+
+    def collect_rollouts_for_eval(
+        self,
+        states: list,
+        replay_buffer,
+        alpha: float = None,
+        n_flags: int = None,
+        number_of_flags: int = None,
+    ) -> RolloutReturn:
+        """
+        Collect experiences and store them into a ``ReplayBuffer``.
+
+        :param env: The training environment
+        :param callback: Callback that will be called at each step
+            (and at the beginning and end of the rollout)
+        :param train_freq: How much experience to collect
+            by doing rollouts of current policy.
+            Either ``TrainFreq(<n>, TrainFrequencyUnit.STEP)``
+            or ``TrainFreq(<n>, TrainFrequencyUnit.EPISODE)``
+            with ``<n>`` being an integer greater than 0.
+        :param action_noise: Action noise that will be used for exploration
+            Required for deterministic policy (e.g. TD3). This can also be used
+            in addition to the stochastic policy for SAC.
+        :param learning_starts: Number of steps before learning for the warm-up phase.
+        :param replay_buffer:
+        :param log_interval: Log data every ``log_interval`` episodes
+        :return:
+        """
+        # Switch to eval mode (this affects batch norm / dropout)
+        self.policy.set_training_mode(False)
+
+        rng = default_rng(self.seed)
+        self.samples = rng.choice(len(states) - 1, self.n_samples_MC)  # TODO : find how to handle with update at each step
+        deltas = []
+        for i in tqdm(self.samples):
+            state = states[i]
+            action, observation, next_observation, reward, done = (
+                replay_buffer.actions[i],
+                replay_buffer.observations[i],
+                replay_buffer.next_observations[i],
+                replay_buffer.rewards[i],
+                replay_buffer.dones[i],
+            )
+            next_action = replay_buffer.actions[i + 1]
+            true_value = evaluate_value_function(
+                self,
+                state,
+                n_flags,
+                number_of_flags,
+                alpha,
+                self.num_timesteps + i,
+                TRUE_ALGO_NAME,
+                action=action,
+            )
+            ent_coef = th.exp(self.log_ent_coef.detach())
             with th.no_grad():
-                # Select action according to policy
-                next_actions, next_log_prob = self.actor.action_log_prob(th.Tensor(replay_buffer.next_observations))
-                # Compute the next Q values: min over all critics targets
+                next_log_prob = self.actor.get_action_dist_params(th.Tensor(next_observation))[1]
                 next_q_values = th.cat(
-                    self.critic(th.Tensor(replay_buffer.next_observations), next_actions),
+                    self.critic(th.Tensor(next_observation), th.Tensor(next_action)),
                     dim=1,
                 )
                 next_q_values, _ = th.min(next_q_values, dim=1, keepdim=True)
-                # add entropy term
                 next_q_values = next_q_values - ent_coef * next_log_prob.reshape(-1, 1)
-                # td error + entropy term
-                target_q_values = (
-                    replay_buffer.rewards + (1 - replay_buffer.dones) * self.gamma * next_q_values.detach().numpy()
-                )
-
-            # Get current Q-values estimates for each critic network
-            # using action from the replay buffer
-            current_actions, current_log_prob = self.actor.action_log_prob(th.Tensor(replay_buffer.observations))
-
+                target_q_values = reward + (1 - done) * self.gamma * next_q_values.detach().numpy()
+            current_log_prob = self.actor.get_action_dist_params(th.Tensor(observation))[1]
             current_q_values = th.cat(
                 self.critic(
-                    th.Tensor(replay_buffer.next_observations),
-                    th.Tensor(current_actions).reshape(self.buffer_size, self.action_space.shape[0]),
+                    th.Tensor(observation),
+                    th.Tensor(action),
                 ),
                 dim=1,
             )  # TODO : mask for only the non zero values?
             current_q_values, _ = th.min(current_q_values, dim=1, keepdim=True)
             # add entropy term
             current_q_values = current_q_values - ent_coef * current_log_prob.reshape(-1, 1)
-            deltas = target_q_values - current_q_values.detach().numpy()
-            if self.alternate_critic is not None:
-                with th.no_grad():
-                    # Compute the next Q values: min over all critics targets
-                    alternate_next_q_values = th.cat(
-                        self.alternate_critic(th.Tensor(replay_buffer.next_observations), next_actions),
-                        dim=1,
-                    )
-                    alternate_next_q_values, _ = th.min(alternate_next_q_values, dim=1, keepdim=True)
-                    # add entropy term
-                    alternate_next_q_values = alternate_next_q_values - ent_coef * next_log_prob.reshape(-1, 1)
-                    # td error + entropy term
-                    alternate_target_q_values = (
-                        replay_buffer.rewards
-                        + (1 - replay_buffer.dones) * self.gamma * alternate_next_q_values.detach().numpy()
-                    )
-                alternate_current_q_values = th.cat(
-                    self.alternate_critic(
-                        th.Tensor(replay_buffer.next_observations),
-                        th.Tensor(current_actions).reshape(self.buffer_size, self.action_space.shape[0]),
-                    ),
-                    dim=1,
-                )  # TODO : mask for only the non zero values?
-                alternate_current_q_values, _ = th.min(alternate_current_q_values, dim=1, keepdim=True)
-                # add entropy term
-                alternate_current_q_values = alternate_current_q_values - ent_coef * current_log_prob.reshape(-1, 1)
-                alternate_deltas = alternate_target_q_values - alternate_current_q_values.detach().numpy()
-            ranking_and_error_logging(
-                self,
-                predicted_values=self.predicted_values,
-                true_values=self.true_values,
-                deltas=deltas,
-                normalized_value_errors=self.normalized_value_errors,
-                value_errors=self.value_errors,
-                alternate_deltas=alternate_deltas,
-                alternate_values=self.predicted_alternate_values,
-                alternate_value_errors=self.alternate_value_errors,
-                alternate_normalized_value_errors=self.alternate_normalized_value_errors,
-            )
-            self.value_errors = []
-            self.normalized_value_errors = []
-            self.predicted_values = []
-            self.true_values = []
-            self.MC_values = []
-            self.predicted_alternate_values = []
-            self.alternate_value_errors = []
-            self.alternate_normalized_value_errors = []
 
-        if update:
-            callback.on_rollout_end()
-        return RolloutReturn(num_collected_steps * env.num_envs, num_collected_episodes, continue_training)
+            predicted_value = current_q_values.detach().numpy()[0]
+            value_error = (true_value - predicted_value) ** 2
+            normalized_value_error = value_error / (true_value**2)
+
+            deltas.append(target_q_values - predicted_value)
+            self.predicted_values.append(predicted_value)
+            self.true_values.append(true_value)
+            self.value_errors.append(value_error)
+            self.normalized_value_errors.append(normalized_value_error)
+        ranking_and_error_logging(
+            self,
+            predicted_values=self.predicted_values,
+            true_values=self.true_values,
+            deltas=deltas,
+            normalized_value_errors=self.normalized_value_errors,
+            value_errors=self.value_errors,
+        )

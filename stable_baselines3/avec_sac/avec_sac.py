@@ -174,6 +174,7 @@ class AVEC_SAC(AvecOffPolicyAlgorithm):
         self.alpha = alpha
         self.correction = correction
         self.env_name = env_name
+        self.states = []
 
         if _init_setup_model:
             self._setup_model()

@@ -1,4 +1,6 @@
 #!/home/yberthel/AVEC/venv/bin/python
+from math import ceil
+from stable_baselines3.common.callbacks import WandbCheckpointCallback
 from stable_baselines3 import AVEC_PPO, PPO, AVEC_SAC, SAC
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.vec_env import VecNormalize
@@ -15,7 +17,7 @@ from copy import deepcopy
 from functools import partial
 
 DEFAULT_N_STEPS = 2048
-DEFAULT_BUFFER_SIZE = 1000000
+DEFAULT_BUFFER_SIZE = 1_000_000
 
 
 def read_hyperparams_data(file_name):
@@ -118,7 +120,7 @@ if __name__ == "__main__":
             )
 
     run = wandb.init(
-        project="avec experiments sac",
+        project="avec experiments sac 2",
         sync_tensorboard=True,
         config={
             "agent": mode,
@@ -166,5 +168,17 @@ if __name__ == "__main__":
         **hyperparams,
         seed=seed,
     )
-    model.learn(total_timesteps=n_timesteps if n_timesteps is not None else n_timesteps_user, callback=WandbCallback())
+    true_n_timesteps = n_timesteps if n_timesteps is not None else n_timesteps_user
+    # Save a checkpoint every 1000 steps
+    n_steps = model.n_steps if "PPO" in mode else model.train_freq.frequency
+    n_flags = 10
+    save_freq = ceil((true_n_timesteps / n_steps) * (1 / n_flags)) * n_steps
+    checkpoint_callback = WandbCheckpointCallback(
+        save_freq=max(save_freq // n_envs, 1),
+        save_path="./models/",
+        name_prefix=f"{env_name}_{mode}_{alpha}_{seed}",
+        save_replay_buffer=True,
+        save_vecnormalize=True,
+    )
+    model.learn(total_timesteps=true_n_timesteps, callback=[checkpoint_callback, WandbCallback()])
     run.finish()
