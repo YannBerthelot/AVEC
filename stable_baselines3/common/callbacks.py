@@ -32,6 +32,7 @@ from pathlib import Path
 
 
 def copy_to_host(source_file: Path, host: str, host_file: Path) -> None:
+    os.system("source /home/yberthel/AVEC/venv/bin/activate")
     os.system(f"scp -r {source_file} {host}:{host_file}")
     if os.path.exists(source_file):
         os.remove(source_file)
@@ -819,7 +820,7 @@ class WandbCheckpointCallback(BaseCallback):
                 # )
                 # process.start()
                 copy_to_host(
-                    replay_buffer_path, "flanders.gw", os.path.join("/mnt/data/yberthel/data", "replay_buffer_" + filename)
+                    replay_buffer_path, "flanders.gw", os.path.join("/mnt/data/yberthel/data", "replay_buffer_" + filename + ".pkl")
                 )
 
             if self.save_vecnormalize and self.model.get_vec_normalize_env() is not None:
@@ -861,7 +862,7 @@ class WandbCheckpointCallback(BaseCallback):
             # )
             # process.start()
             copy_to_host(
-                replay_buffer_path, "flanders.gw", os.path.join("/mnt/data/yberthel/data", "replay_buffer_" + filename)
+                replay_buffer_path, "flanders.gw", os.path.join("/mnt/data/yberthel/data", "replay_buffer_" + filename+ ".pkl")
             )
 
         if self.save_vecnormalize and self.model.get_vec_normalize_env() is not None:
