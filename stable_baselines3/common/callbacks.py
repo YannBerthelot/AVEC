@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 import shutil
 import gymnasium as gym
 import numpy as np
-
+from math import ceil
 from stable_baselines3.common.logger import Logger
 from stable_baselines3.common.avec_utils import save_to_pickle
 
@@ -750,6 +750,8 @@ class WandbCheckpointCallback(BaseCallback):
         self,
         save_freq: int,
         save_path: str,
+        n_steps:int,
+        buffer_size:int,
         name_prefix: str = "rl_model",
         save_replay_buffer: bool = False,
         save_vecnormalize: bool = False,
@@ -761,6 +763,11 @@ class WandbCheckpointCallback(BaseCallback):
         self.name_prefix = name_prefix
         self.save_replay_buffer = save_replay_buffer
         self.save_vecnormalize = save_vecnormalize
+        self.number_of_files_needed = ceil(n_steps / buffer_size)
+        self.flag_vals = n_steps/self.number_of_files_needed
+
+        print(self.number_of_files_needed, self.flag_vals)
+
 
     def _init_callback(self) -> None:
         # Create folder if needed
@@ -792,7 +799,7 @@ class WandbCheckpointCallback(BaseCallback):
             if self.verbose >= 2:
                 print(f"Saving model checkpoint to {model_path}")
 
-            if self.save_replay_buffer and hasattr(self.model, "replay_buffer") and self.model.replay_buffer is not None:
+            if self.save_replay_buffer and hasattr(self.model, "replay_buffer") and self.model.replay_buffer is not None and (self.n_calls % self.flag_vals == 0):
                 # If model has a replay buffer, save it too
                 replay_buffer_path = self._checkpoint_path("replay_buffer_", extension="pkl")
                 self.model.save_replay_buffer(replay_buffer_path)  # type: ignore[attr-defined]

@@ -120,7 +120,7 @@ if __name__ == "__main__":
             )
 
     run = wandb.init(
-        project="avec experiments sac 2",
+        project="avec experiments sac 2 local",
         sync_tensorboard=True,
         config={
             "agent": mode,
@@ -132,6 +132,7 @@ if __name__ == "__main__":
             "alpha": alpha,
         },
     )
+    os.system("wandb artifact cache cleanup 1GB")
     env = make_vec_env(env_name, n_envs=n_envs)
     if normalize:
         env = VecNormalize(env, gamma=hyperparams["gamma"] if "gamma" in hyperparams.keys() else 0.99)
@@ -179,6 +180,8 @@ if __name__ == "__main__":
         name_prefix=f"{env_name}_{mode}_{alpha}_{seed}",
         save_replay_buffer=True,
         save_vecnormalize=True,
+        n_steps=true_n_timesteps,
+        buffer_size=model.replay_buffer.buffer_size,
     )
-    model.learn(total_timesteps=true_n_timesteps, callback=[checkpoint_callback, WandbCallback()])
+    model.learn(total_timesteps=true_n_timesteps, callback=[checkpoint_callback, WandbCallback()], log_interval=100)
     run.finish()

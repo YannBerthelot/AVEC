@@ -1364,8 +1364,8 @@ class AvecOffPolicyAlgorithm(BaseAlgorithm):
                         action_noise.reset(**kwargs)
 
                     # Log training infos
-                    if log_interval is not None and self._episode_num % log_interval == 0:
-                        self._dump_logs()
+            if log_interval is not None and self.num_timesteps % log_interval == 0:
+                self._dump_logs()
         # print(self.num_timesteps, len(self.predicted_values), sorted(self.samples))
         # if value_function_eval and len(self.predicted_values) == self.n_samples_MC:
         #     with th.no_grad():
