@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 from pathlib import Path
 
 
-def copy_to_host(source_file: Path, host: str, host_file: Path) -> None:
+def copy_to_host_and_delete(source_file: Path, host: str, host_file: Path) -> None:
     os.system("source /home/yberthel/AVEC/venv/bin/activate")
     os.system(f"scp -r {source_file} {host}:{host_file}")
     if os.path.exists(source_file):
@@ -790,12 +790,28 @@ class WandbCheckpointCallback(BaseCallback):
             filename = f"{self.name_prefix}_{self.n_calls}"
             model_path = self._checkpoint_path(extension="zip")
             self.model.save(model_path)
-            wandb.log_artifact(artifact_or_path=model_path, name=filename, type="model")
-            os.remove(model_path)
+            # wandb.log_artifact(artifact_or_path=model_path, name=filename, type="model")
+            process = multiprocessing.Process(
+                target=copy_to_host_and_delete,
+                args=(
+                    model_path,
+                    "yberthel@flanders.gw",
+                    os.path.join("/mnt/data/yberthel/data", filename + ".zip"),
+                ),
+            )
+            process.start()
             states_path = os.path.join("/".join(model_path.split("/")[:-1]), f"states_{filename}")
             save_to_pickle(self.model.states, states_path)
-            wandb.log_artifact(artifact_or_path=states_path + ".pkl", name=f"states_{filename}", type="states")
-            os.remove(states_path + ".pkl")
+            # wandb.log_artifact(artifact_or_path=states_path + ".pkl", name=f"states_{filename}", type="states")
+            process = multiprocessing.Process(
+                target=copy_to_host_and_delete,
+                args=(
+                    states_path + ".pkl",
+                    "yberthel@flanders.gw",
+                    os.path.join("/mnt/data/yberthel/data", "states_" + filename + ".pkl"),
+                ),
+            )
+            process.start()
             if self.verbose >= 2:
                 print(f"Saving model checkpoint to {model_path}")
 
@@ -810,18 +826,20 @@ class WandbCheckpointCallback(BaseCallback):
                 self.model.save_replay_buffer(replay_buffer_path)  # type: ignore[attr-defined]
                 if self.verbose > 1:
                     print(f"Saving model replay buffer checkpoint to {replay_buffer_path}")
-                # process = multiprocessing.Process(
-                #     target=copy_to_host,
-                #     args=(
-                #         replay_buffer_path,
-                #         "flanders.gw",
-                #         os.path.join("/mnt/data/yberthel/data", "replay_buffer_" + filename),
-                #     ),
-                # )
-                # process.start()
-                copy_to_host(
-                    replay_buffer_path, "flanders.gw", os.path.join("/mnt/data/yberthel/data", "replay_buffer_" + filename + ".pkl")
+                process = multiprocessing.Process(
+                    target=copy_to_host_and_delete,
+                    args=(
+                        replay_buffer_path,
+                        "yberthel@flanders.gw",
+                        os.path.join("/mnt/data/yberthel/data", "replay_buffer_" + filename + ".pkl"),
+                    ),
                 )
+                process.start()
+                # copy_to_host(
+                #     replay_buffer_path,
+                #     "flanders.gw",
+                #     os.path.join("/mnt/data/yberthel/data", "replay_buffer_" + filename + ".pkl"),
+                # )
 
             if self.save_vecnormalize and self.model.get_vec_normalize_env() is not None:
                 # Save the VecNormalize statistics
@@ -833,42 +851,55 @@ class WandbCheckpointCallback(BaseCallback):
         return True
 
     def _on_training_end(self) -> None:
-        print("ending")
-        filename = f"{self.name_prefix}_{self.n_calls}"
-        model_path = self._checkpoint_path(extension="zip")
-        self.model.save(model_path)
-        wandb.log_artifact(artifact_or_path=model_path, name=filename, type="model")
-        os.remove(model_path)
-        states_path = os.path.join("/".join(model_path.split("/")[:-1]), f"states_{filename}")
-        save_to_pickle(self.model.states, states_path)
-        wandb.log_artifact(artifact_or_path=states_path + ".pkl", name=f"states_{filename}", type="states")
-        os.remove(states_path + ".pkl")
-        if self.verbose >= 2:
-            print(f"Saving model checkpoint to {model_path}")
-
-        if self.save_replay_buffer and hasattr(self.model, "replay_buffer") and self.model.replay_buffer is not None:
-            # If model has a replay buffer, save it too
-            replay_buffer_path = self._checkpoint_path("replay_buffer_", extension="pkl")
-            self.model.save_replay_buffer(replay_buffer_path)  # type: ignore[attr-defined]
-            if self.verbose > 1:
-                print(f"Saving model replay buffer checkpoint to {replay_buffer_path}")
-            # process = multiprocessing.Process(
-            #     target=copy_to_host,
-            #     args=(
-            #         replay_buffer_path,
-            #         "flanders.gw",
-            #         os.path.join("/mnt/data/yberthel/data", "replay_buffer_" + filename),
-            #     ),
-            # )
-            # process.start()
-            copy_to_host(
-                replay_buffer_path, "flanders.gw", os.path.join("/mnt/data/yberthel/data", "replay_buffer_" + filename+ ".pkl")
+        if self.n_calls % self.save_freq != 0:
+            print("ending")
+            filename = f"{self.name_prefix}_{self.n_calls}"
+            model_path = self._checkpoint_path(extension="zip")
+            self.model.save(model_path)
+            # wandb.log_artifact(artifact_or_path=model_path, name=filename, type="model")
+            copy_to_host_and_delete(
+                model_path,
+                "flanders.gw",
+                os.path.join("/mnt/data/yberthel/data", filename + ".zip"),
             )
-
-        if self.save_vecnormalize and self.model.get_vec_normalize_env() is not None:
-            # Save the VecNormalize statistics
-            vec_normalize_path = self._checkpoint_path("vecnormalize_", extension="pkl")
-            self.model.get_vec_normalize_env().save(vec_normalize_path)  # type: ignore[union-attr]
+            # os.remove(model_path)
+            states_path = os.path.join("/".join(model_path.split("/")[:-1]), f"states_{filename}")
+            save_to_pickle(self.model.states, states_path)
+            # wandb.log_artifact(artifact_or_path=states_path + ".pkl", name=f"states_{filename}", type="states")
+            copy_to_host_and_delete(
+                states_path + ".pkl",
+                "flanders.gw",
+                os.path.join("/mnt/data/yberthel/data", "states_" + filename + ".pkl"),
+            )
+            # os.remove(states_path + ".pkl")
             if self.verbose >= 2:
-                print(f"Saving model VecNormalize to {vec_normalize_path}")
-            wandb.log_artifact(artifact_or_path=vec_normalize_path, name="vecnormalize_" + filename, type="vecnormalize")
+                print(f"Saving model checkpoint to {model_path}")
+
+            if self.save_replay_buffer and hasattr(self.model, "replay_buffer") and self.model.replay_buffer is not None:
+                # If model has a replay buffer, save it too
+                replay_buffer_path = self._checkpoint_path("replay_buffer_", extension="pkl")
+                self.model.save_replay_buffer(replay_buffer_path)  # type: ignore[attr-defined]
+                if self.verbose > 1:
+                    print(f"Saving model replay buffer checkpoint to {replay_buffer_path}")
+                # process = multiprocessing.Process(
+                #     target=copy_to_host,
+                #     args=(
+                #         replay_buffer_path,
+                #         "flanders.gw",
+                #         os.path.join("/mnt/data/yberthel/data", "replay_buffer_" + filename),
+                #     ),
+                # )
+                # process.start()
+                copy_to_host_and_delete(
+                    replay_buffer_path,
+                    "flanders.gw",
+                    os.path.join("/mnt/data/yberthel/data", "replay_buffer_" + filename + ".pkl"),
+                )
+
+            if self.save_vecnormalize and self.model.get_vec_normalize_env() is not None:
+                # Save the VecNormalize statistics
+                vec_normalize_path = self._checkpoint_path("vecnormalize_", extension="pkl")
+                self.model.get_vec_normalize_env().save(vec_normalize_path)  # type: ignore[union-attr]
+                if self.verbose >= 2:
+                    print(f"Saving model VecNormalize to {vec_normalize_path}")
+                wandb.log_artifact(artifact_or_path=vec_normalize_path, name="vecnormalize_" + filename, type="vecnormalize")

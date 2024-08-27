@@ -182,6 +182,7 @@ class AVEC_SAC(AvecOffPolicyAlgorithm):
     def _setup_model(self) -> None:
         super()._setup_model()
         self._create_aliases()
+
         # Running mean and running var
         self.batch_norm_stats = get_parameters_by_name(self.critic, ["running_"])
         self.batch_norm_stats_target = get_parameters_by_name(self.critic_target, ["running_"])
@@ -283,11 +284,11 @@ class AVEC_SAC(AvecOffPolicyAlgorithm):
             current_q_values = self.critic(replay_data.observations, replay_data.actions)
             # Compute correction term here?
             if self.correction:
-                with th.no_grad():
-                    q_values_correction = th.cat(self.critic_target(replay_data.observations, replay_data.actions), dim=1)
-                    q_values_correction, _ = th.min(q_values_correction, dim=1, keepdim=True)
-                    q_values_correction = q_values_correction - ent_coef * next_log_prob.reshape(-1, 1)
-                    correction_term = (1 - 2 * self.alpha) / (1 - self.alpha) * th.mean(q_values_correction - next_q_values)
+                # with th.no_grad():
+                q_values_correction = th.cat(self.critic_target(replay_data.observations, replay_data.actions), dim=1)
+                q_values_correction, _ = th.min(q_values_correction, dim=1, keepdim=True)
+                q_values_correction = q_values_correction - ent_coef * next_log_prob.reshape(-1, 1)
+                correction_term = (1 - 2 * self.alpha) / (1 - self.alpha) * th.mean(q_values_correction - next_q_values)
             else:
                 correction_term = 0
             # Compute critic loss

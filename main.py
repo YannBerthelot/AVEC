@@ -162,6 +162,7 @@ if __name__ == "__main__":
         elif mode == "CORRECTED_AVEC_SAC":
             hyperparams["correction"] = True
             agent = AVEC_SAC
+    # hyperparams["learning_starts"] = 0
     model = agent(
         policy,
         env,
