@@ -203,6 +203,7 @@ if __name__ == "__main__":
         "flanders.gw",
         os.path.join("/mnt/data/yberthel/data", filename + ".zip"),
     )
+    assert os.path.exists(os.path.join(folder, filename + ".zip")), "download failed"
 
     states_filename = f"states_{env_name}_{mode}_{alpha}_{seed}_{int(save_freq*flag)}"
     copy_from_host(
@@ -210,12 +211,13 @@ if __name__ == "__main__":
         "flanders.gw",
         os.path.join("/mnt/data/yberthel/data", states_filename + ".pkl"),
     )
+    assert os.path.exists(os.path.join(folder, states_filename + ".pkl")), "download failed"
     states = read_from_pickle(os.path.join(folder, states_filename))
-    os.remove(os.path.join(folder, states_filename))
+    os.remove(os.path.join(folder, states_filename + ".pkl"))
     buffer_size = model.buffer_size
 
     model = model.load(os.path.join(folder, filename))
-    os.remove(os.path.join(folder, filename))
+    os.remove(os.path.join(folder, filename + ".zip"))
     model.set_env(env)
     # model._setup_learn(
     #     0,
