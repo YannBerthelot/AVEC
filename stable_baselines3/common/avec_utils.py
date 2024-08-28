@@ -16,6 +16,14 @@ from copy import deepcopy
 from stable_baselines3.common.utils import obs_as_tensor
 from scipy.stats import kendalltau
 from stable_baselines3.common.type_aliases import RolloutReturn
+from pathlib import Path
+
+
+def copy_to_host_and_delete(source_file: Path, host: str, host_file: Path) -> None:
+    os.system("source /home/yberthel/AVEC/venv/bin/activate")
+    os.system(f"scp -r {source_file} {host}:{host_file}")
+    if os.path.exists(source_file):
+        os.remove(source_file)
 
 
 def compute_pairwise_from_grads(grads_1, grads_2) -> list:
@@ -509,8 +517,10 @@ def collect_rollouts_MC_from_state_and_actions(
 
     if self.use_sde:
         self.actor.reset_noise(env.num_envs)
+    from tqdm import tqdm
 
-    while n_steps < n_rollout_steps:
+    for n_steps in tqdm(range(0, n_rollout_steps, num_envs)):
+        # while n_steps < n_rollout_steps:
         if self.use_sde and self.sde_sample_freq > 0 and num_collected_steps % self.sde_sample_freq == 0:
             # Sample a new noise matrix
             self.actor.reset_noise(env.num_envs)
@@ -540,7 +550,7 @@ def collect_rollouts_MC_from_state_and_actions(
         ).reshape(num_envs, self.action_space.shape[0])
 
         new_obs, rewards, dones, infos = env.step(actual_actions)
-        n_steps += num_envs
+        # n_steps += num_envs
 
         # if update:
         #     # Give access to local variables
@@ -614,6 +624,7 @@ def ranking_and_error_logging(
     alternate_value_errors=None,
     alternate_normalized_value_errors=None,
     alternate_deltas=None,
+    timesteps=None,
 ):
     kendal_tau = kendalltau(np.array(predicted_values), np.array(true_values))
     kendal_tau_stat = kendal_tau.statistic
@@ -636,6 +647,16 @@ def ranking_and_error_logging(
     self.logger.record("values/predicted value std", np.std(predicted_values))
     self.logger.record("values/true value mean", np.mean(true_values))
     self.logger.record("values/true value std", np.std(true_values))
+
+    outlyingness = (true_values - np.median(true_values)) / np.median(abs(true_values - np.median(true_values)))
+
+    self.logger.record("outliers/mean abs outlyingness", np.mean(abs(outlyingness)))
+    self.logger.record("outliers/std abs outlyingness", np.std(abs(outlyingness)))
+    self.logger.record("outliers/min outlyingness", np.min(outlyingness))
+    self.logger.record("outliers/max outlyingness", np.max(outlyingness))
+    self.logger.record("outliers/median abs outlyingness", np.median(outlyingness))
+    self.logger.record("outliers/25p outlyingness", np.quantile(outlyingness, 0.25))
+    self.logger.record("outliers/75p outlyingness", np.quantile(outlyingness, 0.75))
 
     if alternate_values is not None:
         kendal_tau = kendalltau(np.array(alternate_values), np.array(true_values))
@@ -662,6 +683,16 @@ def ranking_and_error_logging(
         self.logger.record("values/alternate predicted value std", np.std(alternate_values))
 
     self.logger.dump(step=self.num_timesteps)
+    corrected = "CORRECTED_" if self.correction else ""
+    mode = f"{corrected}AVEC_{self.true_algo_name}"
+    name_prefix = f"{self.env_name}_{mode}_{self.alpha}_{self.seed}"
+    filename = f"{name_prefix}_{timesteps}"
+    save_to_pickle(true_values, filename)
+    copy_to_host_and_delete(
+        filename + ".pkl",
+        "flanders.gw",
+        os.path.join("/mnt/data/yberthel/data", "true_values_" + filename + ".pkl"),
+    )
 
 
 def get_grad_from_net(net, grads=None) -> list:

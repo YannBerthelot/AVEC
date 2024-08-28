@@ -1457,6 +1457,7 @@ class AvecOffPolicyAlgorithm(BaseAlgorithm):
         alpha: float = None,
         n_flags: int = None,
         number_of_flags: int = None,
+        timesteps=None,
     ) -> RolloutReturn:
         """
         Collect experiences and store them into a ``ReplayBuffer``.
@@ -1502,7 +1503,7 @@ class AvecOffPolicyAlgorithm(BaseAlgorithm):
                 self.num_timesteps + i,
                 TRUE_ALGO_NAME,
                 action=action,
-            )
+            )  # TODO : Save this to flanders
             ent_coef = th.exp(self.log_ent_coef.detach())
             with th.no_grad():
                 next_log_prob = self.actor.get_action_dist_params(th.Tensor(next_observation))[1]
@@ -1541,4 +1542,5 @@ class AvecOffPolicyAlgorithm(BaseAlgorithm):
             deltas=deltas,
             normalized_value_errors=self.normalized_value_errors,
             value_errors=self.value_errors,
+            timesteps=timesteps
         )
