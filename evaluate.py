@@ -217,7 +217,7 @@ if __name__ == "__main__":
     buffer_size = model.buffer_size
 
     model = model.load(os.path.join(folder, filename))
-    os.remove(os.path.join(folder, filename + ".zip"))
+
     model.set_env(env)
     # model._setup_learn(
     #     0,
@@ -260,6 +260,7 @@ if __name__ == "__main__":
             ]
         del temp_model
         os.remove(os.path.join(folder, buffer_filename))
+    os.remove(os.path.join(folder, filename + ".zip"))
     if len(os.listdir(folder)) == 0:
         shutil.rmtree(folder)
     for param, value in hyperparams.items():
