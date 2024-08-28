@@ -259,7 +259,7 @@ if __name__ == "__main__":
                 lower_idx:uppder_idx
             ]
         del temp_model
-        os.remove(os.path.join(folder, buffer_filename))
+        os.remove(os.path.join(folder, buffer_filename=".pkl"))
     os.remove(os.path.join(folder, filename + ".zip"))
     if len(os.listdir(folder)) == 0:
         shutil.rmtree(folder)
