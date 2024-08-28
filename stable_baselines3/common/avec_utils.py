@@ -595,7 +595,7 @@ def evaluate_value_function(
     states_values_MC, MC_episode_lengths, nb_full_episodes = compute_or_load_true_values(
         self, state, n_flags, number_of_flags, alpha, state_idx=n_steps, true_algo_name=true_algo_name, action=action
     )  # TODO : adapt for q values
-    return states_values_MC.mean(axis=0)
+    return states_values_MC.mean(axis=0), MC_episode_lengths, nb_full_episodes
     assert (np.sum(np.isnan(states_values_MC)) == 0) and len(states_values_MC) > 0, f"{states_values_MC=}"
     MC_values = np.concatenate((MC_values, states_values_MC), axis=None)
     predicted_values.append(values.detach().numpy()[0])
@@ -625,6 +625,8 @@ def ranking_and_error_logging(
     alternate_normalized_value_errors=None,
     alternate_deltas=None,
     timesteps=None,
+    MC_episode_lengths=None,
+    nb_full_episodes=None,
 ):
     kendal_tau = kendalltau(np.array(predicted_values), np.array(true_values))
     kendal_tau_stat = kendal_tau.statistic
@@ -647,6 +649,9 @@ def ranking_and_error_logging(
     self.logger.record("values/predicted value std", np.std(predicted_values))
     self.logger.record("values/true value mean", np.mean(true_values))
     self.logger.record("values/true value std", np.std(true_values))
+
+    self.logger.record("MC/mean episode length", np.mean(MC_episode_lengths))
+    self.logger.record("MC/mean number of episodes", np.std(nb_full_episodes))
 
     outlyingness = (true_values - np.median(true_values)) / np.median(abs(true_values - np.median(true_values)))
 

@@ -1484,6 +1484,8 @@ class AvecOffPolicyAlgorithm(BaseAlgorithm):
         rng = default_rng(self.seed)
         self.samples = rng.choice(len(states) - 1, self.n_samples_MC)  # TODO : find how to handle with update at each step
         deltas = []
+        MC_episode_lengths = []
+        nb_full_episodes = []
         for i in tqdm(self.samples):
             state = states[i]
             action, observation, next_observation, reward, done = (
@@ -1494,7 +1496,7 @@ class AvecOffPolicyAlgorithm(BaseAlgorithm):
                 replay_buffer.dones[i],
             )
             next_action = replay_buffer.actions[i + 1]
-            true_value = evaluate_value_function(
+            true_value, MC_episode_length, nb_full_episode = evaluate_value_function(
                 self,
                 state,
                 n_flags,
@@ -1504,6 +1506,8 @@ class AvecOffPolicyAlgorithm(BaseAlgorithm):
                 TRUE_ALGO_NAME,
                 action=action,
             )  # TODO : Save this to flanders
+            MC_episode_lengths.append(MC_episode_length)
+            nb_full_episodes.append(nb_full_episode)
             ent_coef = th.exp(self.log_ent_coef.detach())
             with th.no_grad():
                 next_log_prob = self.actor.get_action_dist_params(th.Tensor(next_observation))[1]
@@ -1542,5 +1546,7 @@ class AvecOffPolicyAlgorithm(BaseAlgorithm):
             deltas=deltas,
             normalized_value_errors=self.normalized_value_errors,
             value_errors=self.value_errors,
-            timesteps=timesteps
+            timesteps=timesteps,
+            MC_episode_lengths=MC_episode_lengths,
+            nb_full_episodes=nb_full_episodes,
         )

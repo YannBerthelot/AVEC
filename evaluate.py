@@ -1,3 +1,4 @@
+#!/home/yberthel/AVEC/venv/bin/python
 from stable_baselines3.common import utils
 import pdb
 import numpy as np
@@ -210,10 +211,11 @@ if __name__ == "__main__":
         os.path.join("/mnt/data/yberthel/data", states_filename + ".pkl"),
     )
     states = read_from_pickle(os.path.join(folder, states_filename))
-
+    os.remove(os.path.join(folder, states_filename))
     buffer_size = model.buffer_size
 
     model = model.load(os.path.join(folder, filename))
+    os.remove(os.path.join(folder, filename))
     model.set_env(env)
     # model._setup_learn(
     #     0,
@@ -255,8 +257,9 @@ if __name__ == "__main__":
                 lower_idx:uppder_idx
             ]
         del temp_model
-
-    shutil.rmtree(folder)
+        os.remove(os.path.join(folder, buffer_filename))
+    if len(os.listdir(folder)) == 0:
+        shutil.rmtree(folder)
     for param, value in hyperparams.items():
         model.__dict__[param] = value
     model.__dict__["n_eval_rollout_steps"] = N_EVAL_TIMESTEPS
