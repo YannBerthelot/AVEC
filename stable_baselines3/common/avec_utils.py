@@ -1,3 +1,5 @@
+from operator import iconcat
+from functools import reduce
 import os
 import wandb
 from typing import Optional, Callable
@@ -354,21 +356,21 @@ def compute_or_load_true_values(
     filename = f"value_{self.env_name}_{algo_name}_{alpha}_{self.seed}_{training_frac}_{state_idx}_{self.n_eval_rollout_envs}_{self.n_eval_rollout_steps}"
     if filename not in os.listdir(self.value_folder):
         states_values_MC, MC_episode_lengths, nb_full_episodes = compute_true_values(self, state, action)
-        values_path = os.path.join(self.value_folder, filename)
+        # values_path = os.path.join(self.value_folder, filename)
 
-        save_to_json(
-            {
-                "value": states_values_MC if isinstance(states_values_MC, list) else states_values_MC.tolist(),
-                "episode_length": (
-                    MC_episode_lengths if isinstance(MC_episode_lengths, list) else MC_episode_lengths.tolist()
-                ),
-                "nb_full_episodes": nb_full_episodes,
-            },
-            values_path,
-        )
-        wandb.log_artifact(
-            artifact_or_path=values_path + ".json", name=filename, type="value"
-        )  # Logs the artifact version "my_data" as a dataset with data from dataset.h5
+        # save_to_json(
+        #     {
+        #         "value": states_values_MC if isinstance(states_values_MC, list) else states_values_MC.tolist(),
+        #         "episode_length": (
+        #             MC_episode_lengths if isinstance(MC_episode_lengths, list) else MC_episode_lengths.tolist()
+        #         ),
+        #         "nb_full_episodes": nb_full_episodes,
+        #     },
+        #     values_path,
+        # )
+        # wandb.log_artifact(
+        #     artifact_or_path=values_path + ".json", name=filename, type="value"
+        # )  # Logs the artifact version "my_data" as a dataset with data from dataset.h5
     else:
         states_values_MC, MC_episode_lengths, nb_full_episodes = read_from_json(filename).values()
     return states_values_MC, MC_episode_lengths, nb_full_episodes
@@ -613,6 +615,16 @@ def evaluate_value_function(
     )
 
 
+def describe_and_log_values(self, values, log_name):
+    self.logger.record(f"{log_name}/mean abs outlyingness", np.mean(abs(values)))
+    self.logger.record(f"{log_name}/std abs outlyingness", np.std(abs(values)))
+    self.logger.record(f"{log_name}/min outlyingness", np.min(values))
+    self.logger.record(f"{log_name}/max outlyingness", np.max(values))
+    self.logger.record(f"{log_name}/median abs outlyingness", np.median(values))
+    self.logger.record(f"{log_name}/25p outlyingness", np.quantile(values, 0.25))
+    self.logger.record(f"{log_name}/75p outlyingness", np.quantile(values, 0.75))
+
+
 def ranking_and_error_logging(
     self,
     predicted_values,
@@ -650,18 +662,15 @@ def ranking_and_error_logging(
     self.logger.record("values/true value mean", np.mean(true_values))
     self.logger.record("values/true value std", np.std(true_values))
 
-    self.logger.record("MC/mean episode length", np.mean(MC_episode_lengths))
+    flattened_MC_episode_lengths = reduce(iconcat, MC_episode_lengths, [])
+    self.logger.record("MC/mean episode length", np.mean(flattened_MC_episode_lengths))
     self.logger.record("MC/mean number of episodes", np.std(nb_full_episodes))
 
     outlyingness = (true_values - np.median(true_values)) / np.median(abs(true_values - np.median(true_values)))
+    z_score = (true_values - np.mean(true_values)) / np.std(true_values)
 
-    self.logger.record("outliers/mean abs outlyingness", np.mean(abs(outlyingness)))
-    self.logger.record("outliers/std abs outlyingness", np.std(abs(outlyingness)))
-    self.logger.record("outliers/min outlyingness", np.min(outlyingness))
-    self.logger.record("outliers/max outlyingness", np.max(outlyingness))
-    self.logger.record("outliers/median abs outlyingness", np.median(outlyingness))
-    self.logger.record("outliers/25p outlyingness", np.quantile(outlyingness, 0.25))
-    self.logger.record("outliers/75p outlyingness", np.quantile(outlyingness, 0.75))
+    describe_and_log_values(self, outlyingness, "outlyingness")
+    describe_and_log_values(self, z_score, "z-score")
 
     if alternate_values is not None:
         kendal_tau = kendalltau(np.array(alternate_values), np.array(true_values))
@@ -692,11 +701,16 @@ def ranking_and_error_logging(
     mode = f"{corrected}AVEC_{self.true_algo_name}"
     name_prefix = f"{self.env_name}_{mode}_{self.alpha}_{self.seed}"
     filename = f"{name_prefix}_{timesteps}"
-    save_to_pickle(true_values, filename)
+    value_length_episodes_json = {
+        "value": true_values if isinstance(true_values, list) else true_values.tolist(),
+        "episode_length": MC_episode_lengths if isinstance(MC_episode_lengths, list) else MC_episode_lengths.tolist(),
+        "nb_full_episodes": nb_full_episodes,
+    }
+    save_to_json(str(value_length_episodes_json), filename)
     copy_to_host_and_delete(
-        filename + ".pkl",
+        filename + ".json",
         "flanders.gw",
-        os.path.join("/mnt/data/yberthel/data", "true_values_" + filename + ".pkl"),
+        os.path.join("/mnt/nfs_disk/yberthel/data", "true_values_" + filename + ".json"),
     )
 
 

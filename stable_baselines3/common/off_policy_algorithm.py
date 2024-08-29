@@ -825,6 +825,8 @@ class AvecOffPolicyAlgorithm(BaseAlgorithm):
             self.lr_schedule,
             **self.policy_kwargs,
         )
+        self.policy.alternate_critic = deepcopy(self.policy.critic)
+        self.policy.alternate_critic_target = deepcopy(self.policy.critic_target)
         self.policy = self.policy.to(self.device)
 
         # Convert train freq parameter to TrainFreq object
@@ -1484,6 +1486,7 @@ class AvecOffPolicyAlgorithm(BaseAlgorithm):
         rng = default_rng(self.seed)
         self.samples = rng.choice(len(states) - 1, self.n_samples_MC)  # TODO : find how to handle with update at each step
         deltas = []
+        alternate_deltas = []
         MC_episode_lengths = []
         nb_full_episodes = []
         for i in tqdm(self.samples):
@@ -1509,6 +1512,8 @@ class AvecOffPolicyAlgorithm(BaseAlgorithm):
             MC_episode_lengths.append(MC_episode_length)
             nb_full_episodes.append(nb_full_episode)
             ent_coef = th.exp(self.log_ent_coef.detach())
+
+            # Base agent
             with th.no_grad():
                 next_log_prob = self.actor.get_action_dist_params(th.Tensor(next_observation))[1]
                 next_q_values = th.cat(
@@ -1539,6 +1544,37 @@ class AvecOffPolicyAlgorithm(BaseAlgorithm):
             self.true_values.append(true_value)
             self.value_errors.append(value_error)
             self.normalized_value_errors.append(normalized_value_error)
+
+            # Alternate critic
+            with th.no_grad():
+                next_log_prob = self.actor.get_action_dist_params(th.Tensor(next_observation))[1]
+                next_q_values = th.cat(
+                    self.alternate_critic(th.Tensor(next_observation), th.Tensor(next_action)),
+                    dim=1,
+                )
+                next_q_values, _ = th.min(next_q_values, dim=1, keepdim=True)
+                next_q_values = next_q_values - ent_coef * next_log_prob.reshape(-1, 1)
+                target_q_values = reward + (1 - done) * self.gamma * next_q_values.detach().numpy()
+            current_log_prob = self.actor.get_action_dist_params(th.Tensor(observation))[1]
+            current_q_values = th.cat(
+                self.alternate_critic(
+                    th.Tensor(observation),
+                    th.Tensor(action),
+                ),
+                dim=1,
+            )  # TODO : mask for only the non zero values?
+            current_q_values, _ = th.min(current_q_values, dim=1, keepdim=True)
+            # add entropy term
+            current_q_values = current_q_values - ent_coef * current_log_prob.reshape(-1, 1)
+
+            predicted_value = current_q_values.detach().numpy()[0]
+            value_error = (true_value - predicted_value) ** 2
+            normalized_value_error = value_error / (true_value**2)
+
+            alternate_deltas.append(target_q_values - predicted_value)
+            self.predicted_alternate_values.append(predicted_value)
+            self.alternate_value_errors.append(value_error)
+            self.alternate_normalized_value_errors.append(normalized_value_error)
         ranking_and_error_logging(
             self,
             predicted_values=self.predicted_values,
@@ -1549,4 +1585,8 @@ class AvecOffPolicyAlgorithm(BaseAlgorithm):
             timesteps=timesteps,
             MC_episode_lengths=MC_episode_lengths,
             nb_full_episodes=nb_full_episodes,
+            alternate_deltas=alternate_deltas,
+            alternate_normalized_value_errors=self.alternate_normalized_value_errors,
+            alternate_value_errors=self.alternate_value_errors,
+            alternate_values=self.predicted_alternate_values,
         )

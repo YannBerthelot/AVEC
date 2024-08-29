@@ -201,7 +201,7 @@ if __name__ == "__main__":
     copy_from_host(
         os.path.join(folder, filename + ".zip"),
         "flanders.gw",
-        os.path.join("/mnt/data/yberthel/data", filename + ".zip"),
+        os.path.join("/mnt/nfs_disk/yberthel/data", filename + ".zip"),
     )
     assert os.path.exists(os.path.join(folder, filename + ".zip")), "download failed"
 
@@ -209,15 +209,17 @@ if __name__ == "__main__":
     copy_from_host(
         os.path.join(folder, states_filename + ".pkl"),
         "flanders.gw",
-        os.path.join("/mnt/data/yberthel/data", states_filename + ".pkl"),
+        os.path.join("/mnt/nfs_disk/yberthel/data", states_filename + ".pkl"),
     )
     assert os.path.exists(os.path.join(folder, states_filename + ".pkl")), "download failed"
     states = read_from_pickle(os.path.join(folder, states_filename))
     os.remove(os.path.join(folder, states_filename + ".pkl"))
     buffer_size = model.buffer_size
-
+    old_alt_params = deepcopy(model.get_parameters()["policy"]["alternate_critic.qf0.0.weight"])
     model = model.load(os.path.join(folder, filename))
-
+    assert not torch.equal(
+        old_alt_params, model.get_parameters()["policy"]["alternate_critic.qf0.0.weight"]
+    ), "alt critic didn't change after loading"
     model.set_env(env)
     # model._setup_learn(
     #     0,
@@ -241,7 +243,7 @@ if __name__ == "__main__":
             copy_from_host(
                 os.path.join(folder, buffer_filename + ".pkl"),
                 "flanders.gw",
-                os.path.join("/mnt/data/yberthel/data", buffer_filename + ".pkl"),
+                os.path.join("/mnt/nfs_disk/yberthel/data", buffer_filename + ".pkl"),
             )
             assert os.path.exists(os.path.join(folder, buffer_filename + ".pkl")), "download failed"
         buffer_files.append(buffer_filename)
@@ -259,7 +261,7 @@ if __name__ == "__main__":
                 lower_idx:uppder_idx
             ]
         del temp_model
-        os.remove(os.path.join(folder, buffer_filename=".pkl"))
+        os.remove(os.path.join(folder, buffer_filename + ".pkl"))
     os.remove(os.path.join(folder, filename + ".zip"))
     if len(os.listdir(folder)) == 0:
         shutil.rmtree(folder)

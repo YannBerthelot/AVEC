@@ -796,7 +796,7 @@ class WandbCheckpointCallback(BaseCallback):
                 args=(
                     model_path,
                     "yberthel@flanders.gw",
-                    os.path.join("/mnt/data/yberthel/data", filename + ".zip"),
+                    os.path.join("/mnt/nfs_disk/yberthel/data", filename + ".zip"),
                 ),
             )
             process.start()
@@ -808,7 +808,7 @@ class WandbCheckpointCallback(BaseCallback):
                 args=(
                     states_path + ".pkl",
                     "yberthel@flanders.gw",
-                    os.path.join("/mnt/data/yberthel/data", "states_" + filename + ".pkl"),
+                    os.path.join("/mnt/nfs_disk/yberthel/data", "states_" + filename + ".pkl"),
                 ),
             )
             process.start()
@@ -831,14 +831,14 @@ class WandbCheckpointCallback(BaseCallback):
                     args=(
                         replay_buffer_path,
                         "yberthel@flanders.gw",
-                        os.path.join("/mnt/data/yberthel/data", "replay_buffer_" + filename + ".pkl"),
+                        os.path.join("/mnt/nfs_disk/yberthel/data", "replay_buffer_" + filename + ".pkl"),
                     ),
                 )
                 process.start()
                 # copy_to_host(
                 #     replay_buffer_path,
                 #     "flanders.gw",
-                #     os.path.join("/mnt/data/yberthel/data", "replay_buffer_" + filename + ".pkl"),
+                #     os.path.join("/mnt/nfs_disk/yberthel/data", "replay_buffer_" + filename + ".pkl"),
                 # )
 
             if self.save_vecnormalize and self.model.get_vec_normalize_env() is not None:
@@ -860,7 +860,7 @@ class WandbCheckpointCallback(BaseCallback):
             copy_to_host_and_delete(
                 model_path,
                 "flanders.gw",
-                os.path.join("/mnt/data/yberthel/data", filename + ".zip"),
+                os.path.join("/mnt/nfs_disk/yberthel/data", filename + ".zip"),
             )
             # os.remove(model_path)
             states_path = os.path.join("/".join(model_path.split("/")[:-1]), f"states_{filename}")
@@ -869,7 +869,7 @@ class WandbCheckpointCallback(BaseCallback):
             copy_to_host_and_delete(
                 states_path + ".pkl",
                 "flanders.gw",
-                os.path.join("/mnt/data/yberthel/data", "states_" + filename + ".pkl"),
+                os.path.join("/mnt/nfs_disk/yberthel/data", "states_" + filename + ".pkl"),
             )
             # os.remove(states_path + ".pkl")
             if self.verbose >= 2:
@@ -886,14 +886,14 @@ class WandbCheckpointCallback(BaseCallback):
                 #     args=(
                 #         replay_buffer_path,
                 #         "flanders.gw",
-                #         os.path.join("/mnt/data/yberthel/data", "replay_buffer_" + filename),
+                #         os.path.join("/mnt/nfs_disk/yberthel/data", "replay_buffer_" + filename),
                 #     ),
                 # )
                 # process.start()
                 copy_to_host_and_delete(
                     replay_buffer_path,
                     "flanders.gw",
-                    os.path.join("/mnt/data/yberthel/data", "replay_buffer_" + filename + ".pkl"),
+                    os.path.join("/mnt/nfs_disk/yberthel/data", "replay_buffer_" + filename + ".pkl"),
                 )
 
             if self.save_vecnormalize and self.model.get_vec_normalize_env() is not None:

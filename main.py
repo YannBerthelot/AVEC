@@ -171,6 +171,7 @@ if __name__ == "__main__":
         seed=seed,
     )
     true_n_timesteps = n_timesteps if n_timesteps is not None else n_timesteps_user
+    # true_n_timesteps = int(1e4)
     # Save a checkpoint every 1000 steps
     n_steps = model.n_steps if "PPO" in mode else model.train_freq.frequency
     n_flags = 10

@@ -18,7 +18,7 @@ from copy import deepcopy
 
 SelfSAC = TypeVar("SelfSAC", bound="AVEC_SAC")
 
-COMPARE_VALUE = False
+COMPARE_VALUE = True
 
 
 class AVEC_SAC(AvecOffPolicyAlgorithm):
@@ -91,6 +91,8 @@ class AVEC_SAC(AvecOffPolicyAlgorithm):
     actor: Actor
     critic: ContinuousCritic
     critic_target: ContinuousCritic
+    alternate_critic: ContinuousCritic
+    alternate_critic_target: ContinuousCritic
 
     def __init__(
         self,
@@ -186,6 +188,8 @@ class AVEC_SAC(AvecOffPolicyAlgorithm):
         # Running mean and running var
         self.batch_norm_stats = get_parameters_by_name(self.critic, ["running_"])
         self.batch_norm_stats_target = get_parameters_by_name(self.critic_target, ["running_"])
+        self.alternate_batch_norm_stats = get_parameters_by_name(self.critic, ["running_"])
+        self.alternate_batch_norm_stats_target = get_parameters_by_name(self.critic_target, ["running_"])
         # Target entropy is used when learning the entropy coefficient
         if self.target_entropy == "auto":
             # automatically set target entropy if needed
@@ -218,8 +222,9 @@ class AVEC_SAC(AvecOffPolicyAlgorithm):
     def _create_aliases(self) -> None:
         self.actor = self.policy.actor
         self.critic = self.policy.critic
-        self.alternate_critic = deepcopy(self.critic)
+        self.alternate_critic = self.policy.alternate_critic
         self.critic_target = self.policy.critic_target
+        self.alternate_critic_target = self.policy.alternate_critic_target
 
     def train(self, gradient_steps: int, batch_size: int = 64, update: bool = True, alpha=None) -> None:
         alpha = self.alpha if alpha is None else alpha
@@ -296,6 +301,20 @@ class AVEC_SAC(AvecOffPolicyAlgorithm):
             # # critic_loss = MSE
 
             alternate_alpha = 0.5
+            alternate_current_q_values = self.alternate_critic(replay_data.observations, replay_data.actions)
+            with th.no_grad():
+                # Compute the next Q values: min over all critics targets
+
+                alternate_next_q_values = th.cat(
+                    self.alternate_critic_target(replay_data.next_observations, next_actions), dim=1
+                )
+                alternate_next_q_values, _ = th.min(alternate_next_q_values, dim=1, keepdim=True)
+                # add entropy term
+                alternate_next_q_values = alternate_next_q_values - ent_coef * next_log_prob.reshape(-1, 1)
+                # td error + entropy term
+                alternate_target_q_values = (
+                    replay_data.rewards + (1 - replay_data.dones) * self.gamma * alternate_next_q_values
+                )
 
             critic_loss = 0.5 * sum(
                 (1 - alpha) * th.var(current_q - target_q_values, unbiased=False)
@@ -303,15 +322,13 @@ class AVEC_SAC(AvecOffPolicyAlgorithm):
                 for current_q in current_q_values
             )
             # critic_loss = 0.5 * sum(F.mse_loss(current_q, target_q_values) for current_q in current_q_values)
-            # if COMPARE_VALUE:
-            #     alternate_current_q_values = (current_q.clone() for current_q in current_q_values)
-            #     alternate_target_q_values = target_q_values.clone()
-            #     alternate_critic_loss = 0.5 * sum(
-            #         (1 - alternate_alpha) * th.var(current_q - alternate_target_q_values, unbiased=False)
-            #         + alternate_alpha * th.square(th.mean(current_q - alternate_target_q_values))
-            #         for current_q in alternate_current_q_values
-            #     )
-            #     alternate_critic_losses.append(alternate_critic_loss.item())  # type: ignore[union-attr]
+            if COMPARE_VALUE:
+                alternate_critic_loss = 0.5 * sum(
+                    (1 - alternate_alpha) * th.var(current_q - alternate_target_q_values, unbiased=False)
+                    + alternate_alpha * th.square(th.mean(current_q - alternate_target_q_values))
+                    for current_q in alternate_current_q_values
+                )
+                alternate_critic_losses.append(alternate_critic_loss.item())  # type: ignore[union-attr]
             assert isinstance(critic_loss, th.Tensor)  # for type checker
             critic_losses.append(critic_loss.item())  # type: ignore[union-attr]
 
@@ -322,10 +339,10 @@ class AVEC_SAC(AvecOffPolicyAlgorithm):
             if update:
 
                 self.critic.optimizer.step()
-                # if COMPARE_VALUE:
-                #     self.alternate_critic.optimizer.zero_grad()
-                #     alternate_critic_loss.backward()
-                #     self.alternate_critic.optimizer.step()
+                if COMPARE_VALUE:
+                    self.alternate_critic.optimizer.zero_grad()
+                    alternate_critic_loss.backward()
+                    self.alternate_critic.optimizer.step()
 
             # Compute actor loss
             # Alternative: actor_loss = th.mean(log_prob - qf1_pi)
@@ -350,6 +367,10 @@ class AVEC_SAC(AvecOffPolicyAlgorithm):
                     # Copy running stats, see GH issue #996
                     polyak_update(self.batch_norm_stats, self.batch_norm_stats_target, 1.0)
                     # TODO : add the alternate
+                    if COMPARE_VALUE:
+                        polyak_update(self.alternate_critic.parameters(), self.alternate_critic_target.parameters(), self.tau)
+                        # Copy running stats, see GH issue #996
+                        polyak_update(self.alternate_batch_norm_stats, self.alternate_batch_norm_stats_target, 1.0)
         if update:
             self._n_updates += gradient_steps
 
@@ -380,10 +401,16 @@ class AVEC_SAC(AvecOffPolicyAlgorithm):
         )
 
     def _excluded_save_params(self) -> List[str]:
-        return super()._excluded_save_params() + ["actor", "critic", "critic_target"]  # noqa: RUF005
+        return super()._excluded_save_params() + [
+            "actor",
+            "critic",
+            "critic_target",
+            "alternate_critic",
+            "alternate_critic_target",
+        ]  # noqa: RUF005
 
     def _get_torch_save_params(self) -> Tuple[List[str], List[str]]:
-        state_dicts = ["policy", "actor.optimizer", "critic.optimizer"]
+        state_dicts = ["policy", "actor.optimizer", "critic.optimizer", "alternate_critic.optimizer"]
         if self.ent_coef_optimizer is not None:
             saved_pytorch_variables = ["log_ent_coef"]
             state_dicts.append("ent_coef_optimizer")
@@ -570,7 +597,9 @@ class CORRECTED_AVEC_SAC(OffPolicyAlgorithm):
     def _create_aliases(self) -> None:
         self.actor = self.policy.actor
         self.critic = self.policy.critic
+        self.alternate_critic = self.policy.alternate_critic
         self.critic_target = self.policy.critic_target
+        self.alternate_critic_target = self.policy.alternate_critic_target
 
     def train(self, gradient_steps: int, batch_size: int = 64) -> None:
         # Switch to train mode (this affects batch norm / dropout)
@@ -661,6 +690,10 @@ class CORRECTED_AVEC_SAC(OffPolicyAlgorithm):
                 polyak_update(self.critic.parameters(), self.critic_target.parameters(), self.tau)
                 # Copy running stats, see GH issue #996
                 polyak_update(self.batch_norm_stats, self.batch_norm_stats_target, 1.0)
+                if COMPARE_VALUE:
+                    polyak_update(self.alternate_critic.parameters(), self.alternate_critic_target.parameters(), self.tau)
+                    # Copy running stats, see GH issue #996
+                    polyak_update(self.batch_norm_stats, self.batch_norm_stats_target, 1.0)
 
         self._n_updates += gradient_steps
 
