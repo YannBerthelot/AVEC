@@ -150,15 +150,16 @@ if __name__ == "__main__":
         elif mode == "CORRECTED_AVEC_PPO":
             hyperparams["correction"] = True
             agent = AVEC_PPO
-    elif mode == "SAC":
-        agent = SAC
-    elif "AVEC_SAC" in mode:  # or (mode == "CORRECTED_AVEC_PPO"):
+    elif "SAC" in mode:  # or (mode == "CORRECTED_AVEC_PPO"):
         hyperparams["env_name"] = env_name
         hyperparams["alpha"] = alpha
         hyperparams["n_eval_timesteps"] = N_EVAL_TIMESTEPS
         hyperparams["n_samples_MC"] = N_SAMPLES_MC
         hyperparams["n_eval_envs"] = N_EVAL_ENVS
-        if mode == "AVEC_SAC":
+        if mode == "SAC":
+            agent = AVEC_SAC
+            hyperparams["AVEC"] = False
+        elif mode == "AVEC_SAC":
             agent = AVEC_SAC
         elif mode == "CORRECTED_AVEC_SAC":
             hyperparams["correction"] = True

@@ -773,7 +773,10 @@ class WandbCheckpointCallback(BaseCallback):
         self.number_of_files_needed = ceil(n_steps / buffer_size)
         self.flag_vals = n_steps / self.number_of_files_needed
         env = self.name_prefix.split("_")[0]
-        agent = "_".join(self.name_prefix.split("_")[1:3])
+        if "AVEC" in self.name_prefix:
+            agent = "_".join(self.name_prefix.split("_")[1:3])
+        else:
+            agent = self.name_prefix.split("_")[1]
         self.target_folder = os.path.join("/mnt/nfs_disk/yberthel/data", env, agent)
 
     def _init_callback(self) -> None:
