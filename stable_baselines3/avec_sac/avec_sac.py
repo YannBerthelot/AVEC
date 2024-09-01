@@ -323,9 +323,14 @@ class AVEC_SAC(AvecOffPolicyAlgorithm):
                     + alpha * th.square(th.mean(current_q - target_q_values))
                     for current_q in current_q_values
                 )
-            else:
-                critic_loss = 0.5 * sum(F.mse_loss(current_q, target_q_values) for current_q in current_q_values)
-            
+            else:  # classic SAC loss
+                critic_loss = 0.5 * sum(
+                    (1 - alpha) * th.var(current_q, unbiased=False)
+                    + alpha * th.mean(th.square(th.mean(current_q) - target_q_values))
+                    for current_q in current_q_values
+                )
+                # base_critic_loss = 0.5 * sum(F.mse_loss(current_q, target_q_values) for current_q in current_q_values)
+                # print(other_base_loss, base_critic_loss)
 
             if COMPARE_VALUE:
                 # alternate_critic_loss = 0.5 * sum(
