@@ -131,6 +131,7 @@ class AVEC_SAC(AvecOffPolicyAlgorithm):
         n_eval_envs: int = 32,
         grads_folder: str = "grads",
         value_folder: str = "values",
+        AVEC: bool = True,
     ):
 
         super().__init__(
@@ -177,6 +178,7 @@ class AVEC_SAC(AvecOffPolicyAlgorithm):
         self.correction = correction
         self.env_name = env_name
         self.states = []
+        self.AVEC = AVEC
 
         if _init_setup_model:
             self._setup_model()
@@ -288,7 +290,7 @@ class AVEC_SAC(AvecOffPolicyAlgorithm):
             # using action from the replay buffer
             current_q_values = self.critic(replay_data.observations, replay_data.actions)
             # Compute correction term here?
-            if self.correction:
+            if self.correction and self.AVEC:
                 # with th.no_grad():
                 q_values_correction = th.cat(self.critic_target(replay_data.observations, replay_data.actions), dim=1)
                 q_values_correction, _ = th.min(q_values_correction, dim=1, keepdim=True)
@@ -315,18 +317,24 @@ class AVEC_SAC(AvecOffPolicyAlgorithm):
                 alternate_target_q_values = (
                     replay_data.rewards + (1 - replay_data.dones) * self.gamma * alternate_next_q_values
                 )
+            if self.AVEC:
+                critic_loss = 0.5 * sum(
+                    (1 - alpha) * th.var(current_q - target_q_values, unbiased=False)
+                    + alpha * th.square(th.mean(current_q - target_q_values))
+                    for current_q in current_q_values
+                )
+            else:
+                critic_loss = 0.5 * sum(F.mse_loss(current_q, target_q_values) for current_q in current_q_values)
+            
 
-            critic_loss = 0.5 * sum(
-                (1 - alpha) * th.var(current_q - target_q_values, unbiased=False)
-                + alpha * th.square(th.mean(current_q - target_q_values))
-                for current_q in current_q_values
-            )
-            # critic_loss = 0.5 * sum(F.mse_loss(current_q, target_q_values) for current_q in current_q_values)
             if COMPARE_VALUE:
+                # alternate_critic_loss = 0.5 * sum(
+                #     (1 - alternate_alpha) * th.var(current_q - alternate_target_q_values, unbiased=False)
+                #     + alternate_alpha * th.square(th.mean(current_q - alternate_target_q_values))
+                #     for current_q in alternate_current_q_values
+                # )
                 alternate_critic_loss = 0.5 * sum(
-                    (1 - alternate_alpha) * th.var(current_q - alternate_target_q_values, unbiased=False)
-                    + alternate_alpha * th.square(th.mean(current_q - alternate_target_q_values))
-                    for current_q in alternate_current_q_values
+                    F.mse_loss(current_q, alternate_target_q_values) for current_q in alternate_current_q_values
                 )
                 alternate_critic_losses.append(alternate_critic_loss.item())  # type: ignore[union-attr]
             assert isinstance(critic_loss, th.Tensor)  # for type checker

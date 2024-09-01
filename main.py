@@ -163,7 +163,7 @@ if __name__ == "__main__":
         elif mode == "CORRECTED_AVEC_SAC":
             hyperparams["correction"] = True
             agent = AVEC_SAC
-    hyperparams["learning_starts"] = 0
+    # hyperparams["learning_starts"] = 0
     model = agent(
         policy,
         env,
@@ -172,7 +172,7 @@ if __name__ == "__main__":
         seed=seed,
     )
     true_n_timesteps = n_timesteps if n_timesteps is not None else n_timesteps_user
-    true_n_timesteps = int(1e4)
+    # true_n_timesteps = int(1e4)
     # Save a checkpoint every 1000 steps
     n_steps = model.n_steps if "PPO" in mode else model.train_freq.frequency
     n_flags = 10
