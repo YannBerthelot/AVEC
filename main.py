@@ -120,7 +120,7 @@ if __name__ == "__main__":
             )
 
     run = wandb.init(
-        project="avec experiments sac 5",
+        project="avec experiments sac 5 local",
         sync_tensorboard=True,
         mode="online",
         config={
@@ -163,7 +163,7 @@ if __name__ == "__main__":
         elif mode == "CORRECTED_AVEC_SAC":
             hyperparams["correction"] = True
             agent = AVEC_SAC
-    # hyperparams["learning_starts"] = 0
+    hyperparams["learning_starts"] = 0
     model = agent(
         policy,
         env,
@@ -172,7 +172,7 @@ if __name__ == "__main__":
         seed=seed,
     )
     true_n_timesteps = n_timesteps if n_timesteps is not None else n_timesteps_user
-    # true_n_timesteps = int(1e4)
+    true_n_timesteps = int(1e4)
     # Save a checkpoint every 1000 steps
     n_steps = model.n_steps if "PPO" in mode else model.train_freq.frequency
     n_flags = 10
@@ -186,5 +186,5 @@ if __name__ == "__main__":
         n_steps=true_n_timesteps,
         buffer_size=model.replay_buffer.buffer_size,
     )
-    model.learn(total_timesteps=true_n_timesteps, callback=[checkpoint_callback, WandbCallback()], log_interval=100)
+    model.learn(total_timesteps=true_n_timesteps, callback=[checkpoint_callback, WandbCallback()], log_interval=200)
     run.finish()
