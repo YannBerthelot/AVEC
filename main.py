@@ -120,8 +120,9 @@ if __name__ == "__main__":
             )
 
     run = wandb.init(
-        project="avec experiments sac 2 local",
+        project="avec experiments sac 5",
         sync_tensorboard=True,
+        mode="online",
         config={
             "agent": mode,
             "mode": mode,

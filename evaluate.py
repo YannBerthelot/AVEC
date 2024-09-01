@@ -140,7 +140,7 @@ if __name__ == "__main__":
             )
 
     run = wandb.init(
-        project="avec experiments sac local",
+        project="avec experiments sac 5",
         sync_tensorboard=True,
         config={
             "agent": mode,
@@ -203,7 +203,7 @@ if __name__ == "__main__":
         "flanders.gw",
         os.path.join("/mnt/nfs_disk/yberthel/data", filename + ".zip"),
     )
-    assert os.path.exists(os.path.join(folder, filename + ".zip")), "download failed"
+    assert os.path.exists(os.path.join(folder, filename + ".zip")), f"download failed for {filename}"
 
     states_filename = f"states_{env_name}_{mode}_{alpha}_{seed}_{int(save_freq*flag)}"
     copy_from_host(
@@ -211,7 +211,7 @@ if __name__ == "__main__":
         "flanders.gw",
         os.path.join("/mnt/nfs_disk/yberthel/data", states_filename + ".pkl"),
     )
-    assert os.path.exists(os.path.join(folder, states_filename + ".pkl")), "download failed"
+    assert os.path.exists(os.path.join(folder, states_filename + ".pkl")), f"download failed for {states_filename}"
     states = read_from_pickle(os.path.join(folder, states_filename))
     os.remove(os.path.join(folder, states_filename + ".pkl"))
     buffer_size = model.buffer_size
@@ -245,7 +245,7 @@ if __name__ == "__main__":
                 "flanders.gw",
                 os.path.join("/mnt/nfs_disk/yberthel/data", buffer_filename + ".pkl"),
             )
-            assert os.path.exists(os.path.join(folder, buffer_filename + ".pkl")), "download failed"
+            assert os.path.exists(os.path.join(folder, buffer_filename + ".pkl")), f"download failed for {buffer_filename}"
         buffer_files.append(buffer_filename)
 
     number_of_files_needed = ceil(flag * save_freq / model.replay_buffer.buffer_size)

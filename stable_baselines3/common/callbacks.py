@@ -32,10 +32,14 @@ from pathlib import Path
 
 
 def copy_to_host_and_delete(source_file: Path, host: str, host_file: Path) -> None:
-    os.system("source /home/yberthel/AVEC/venv/bin/activate")
-    os.system(f"scp -r {source_file} {host}:{host_file}")
+    os.system(f"scp -r {source_file} {host}:{host_file} && echo {host_file}!")
     if os.path.exists(source_file):
         os.remove(source_file)
+
+
+def sync_wandb():
+    os.system(f"wandb sync --sync-all && echo success")
+    # os.system(f"source /home/yberthel/AVEC/venv/bin/activate && wandb sync --sync-all && echo success")
 
 
 class BaseCallback(ABC):
@@ -791,27 +795,35 @@ class WandbCheckpointCallback(BaseCallback):
             model_path = self._checkpoint_path(extension="zip")
             self.model.save(model_path)
             # wandb.log_artifact(artifact_or_path=model_path, name=filename, type="model")
-            process = multiprocessing.Process(
-                target=copy_to_host_and_delete,
-                args=(
-                    model_path,
-                    "yberthel@flanders.gw",
-                    os.path.join("/mnt/nfs_disk/yberthel/data", filename + ".zip"),
-                ),
+            # process = multiprocessing.Process(
+            #     target=copy_to_host_and_delete,
+            #     args=(
+            #         model_path,
+            #         "yberthel@flanders.gw",
+            #         os.path.join("/mnt/nfs_disk/yberthel/data", filename + ".zip"),
+            #     ),
+            # )
+            # process.start()
+            copy_to_host_and_delete(
+                model_path, "yberthel@flanders.gw", os.path.join("/mnt/nfs_disk/yberthel/data", filename + ".zip")
             )
-            process.start()
             states_path = os.path.join("/".join(model_path.split("/")[:-1]), f"states_{filename}")
             save_to_pickle(self.model.states, states_path)
             # wandb.log_artifact(artifact_or_path=states_path + ".pkl", name=f"states_{filename}", type="states")
-            process = multiprocessing.Process(
-                target=copy_to_host_and_delete,
-                args=(
-                    states_path + ".pkl",
-                    "yberthel@flanders.gw",
-                    os.path.join("/mnt/nfs_disk/yberthel/data", "states_" + filename + ".pkl"),
-                ),
+            # process = multiprocessing.Process(
+            #     target=copy_to_host_and_delete,
+            #     args=(
+            #         states_path + ".pkl",
+            #         "yberthel@flanders.gw",
+            #         os.path.join("/mnt/nfs_disk/yberthel/data", "states_" + filename + ".pkl"),
+            #     ),
+            # )
+            # process.start()
+            copy_to_host_and_delete(
+                states_path + ".pkl",
+                "yberthel@flanders.gw",
+                os.path.join("/mnt/nfs_disk/yberthel/data", "states_" + filename + ".pkl"),
             )
-            process.start()
             if self.verbose >= 2:
                 print(f"Saving model checkpoint to {model_path}")
 
@@ -826,15 +838,16 @@ class WandbCheckpointCallback(BaseCallback):
                 self.model.save_replay_buffer(replay_buffer_path)  # type: ignore[attr-defined]
                 if self.verbose > 1:
                     print(f"Saving model replay buffer checkpoint to {replay_buffer_path}")
-                process = multiprocessing.Process(
-                    target=copy_to_host_and_delete,
-                    args=(
-                        replay_buffer_path,
-                        "yberthel@flanders.gw",
-                        os.path.join("/mnt/nfs_disk/yberthel/data", "replay_buffer_" + filename + ".pkl"),
-                    ),
-                )
-                process.start()
+                # process = multiprocessing.Process(
+                #     target=copy_to_host_and_delete,
+                #     args=(
+                #         replay_buffer_path,
+                #         "yberthel@flanders.gw",
+                #         os.path.join("/mnt/nfs_disk/yberthel/data", "replay_buffer_" + filename + ".pkl"),
+                #     ),
+                # )
+                # process.start()
+                copy_to_host_and_delete(replay_buffer_path, "yberthel@flanders.gw", os.path.join("/mnt/nfs_disk/yberthel/data", "replay_buffer_" + filename + ".pkl"))
                 # copy_to_host(
                 #     replay_buffer_path,
                 #     "flanders.gw",
