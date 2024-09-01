@@ -298,12 +298,10 @@ class AVEC_SAC(AvecOffPolicyAlgorithm):
                 correction_term = (1 - 2 * self.alpha) / (1 - self.alpha) * th.mean(q_values_correction - next_q_values)
             else:
                 correction_term = 0
-            # Compute critic loss
-            # critic_loss = 0.5 * sum(F.mse_loss(current_q, target_q_values) for current_q in current_q_values)
-            # # critic_loss = MSE
 
-            alternate_alpha = 0.5
-            alternate_current_q_values = self.alternate_critic(replay_data.observations, replay_data.actions)
+            alternate_current_q_values = self.alternate_critic(
+                replay_data.observations, replay_data.actions
+            )  # TODO : init critics the same way
             with th.no_grad():
                 # Compute the next Q values: min over all critics targets
 
@@ -318,19 +316,21 @@ class AVEC_SAC(AvecOffPolicyAlgorithm):
                     replay_data.rewards + (1 - replay_data.dones) * self.gamma * alternate_next_q_values
                 )
             if self.AVEC:
-                critic_loss = 0.5 * sum(
+                critic_loss = sum(
                     (1 - alpha) * th.var(current_q - target_q_values, unbiased=False)
                     + alpha * th.square(th.mean(current_q - target_q_values))
                     for current_q in current_q_values
                 )
+
+                MSE_critic_loss = 0.5 * sum(F.mse_loss(current_q, target_q_values) for current_q in current_q_values)
             else:  # classic SAC loss
-                critic_loss = 0.5 * sum(
-                    (1 - alpha) * th.var(current_q, unbiased=False)
-                    + alpha * th.mean(th.square(th.mean(current_q) - target_q_values))
-                    for current_q in current_q_values
-                )
-                # base_critic_loss = 0.5 * sum(F.mse_loss(current_q, target_q_values) for current_q in current_q_values)
-                # print(other_base_loss, base_critic_loss)
+                critic_loss = 0.5 * sum(F.mse_loss(current_q, target_q_values) for current_q in current_q_values)
+
+                # critic_loss = 0.5 * sum(
+                #     (1 - alpha) * th.var(current_q - target_q_values, unbiased=False)
+                #     + alpha * th.square(th.mean(current_q - target_q_values))
+                #     for current_q in current_q_values
+                # )
 
             if COMPARE_VALUE:
                 # alternate_critic_loss = 0.5 * sum(
@@ -338,7 +338,7 @@ class AVEC_SAC(AvecOffPolicyAlgorithm):
                 #     + alternate_alpha * th.square(th.mean(current_q - alternate_target_q_values))
                 #     for current_q in alternate_current_q_values
                 # )
-                alternate_critic_loss = 0.5 * sum(
+                alternate_critic_loss = 0.25 * sum(
                     F.mse_loss(current_q, alternate_target_q_values) for current_q in alternate_current_q_values
                 )
                 alternate_critic_losses.append(alternate_critic_loss.item())  # type: ignore[union-attr]
