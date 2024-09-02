@@ -356,18 +356,28 @@ def compute_or_load_true_values(
     filename = f"value_{self.env_name}_{algo_name}_{alpha}_{self.seed}_{training_frac}_{state_idx}_{self.n_eval_rollout_envs}_{self.n_eval_rollout_steps}"
     if filename not in os.listdir(self.value_folder):
         states_values_MC, MC_episode_lengths, nb_full_episodes = compute_true_values(self, state, action)
-        # values_path = os.path.join(self.value_folder, filename)
-
-        # save_to_json(
-        #     {
-        #         "value": states_values_MC if isinstance(states_values_MC, list) else states_values_MC.tolist(),
-        #         "episode_length": (
-        #             MC_episode_lengths if isinstance(MC_episode_lengths, list) else MC_episode_lengths.tolist()
-        #         ),
-        #         "nb_full_episodes": nb_full_episodes,
-        #     },
-        #     values_path,
-        # )
+        values_path = os.path.join(self.value_folder, filename)
+        save_to_json(
+            {
+                "value": states_values_MC if isinstance(states_values_MC, list) else states_values_MC.tolist(),
+                "episode_length": (
+                    MC_episode_lengths if isinstance(MC_episode_lengths, list) else MC_episode_lengths.tolist()
+                ),
+                "nb_full_episodes": nb_full_episodes,
+            },
+            values_path,
+        )
+        agent = self.true_algo_name
+        if self.AVEC:
+            agent = f"AVEC_{agent}"
+        if self.correction:
+            agent = f"CORRECTED_{agent}"
+        target_folder = os.path.join("/mnt/nfs_disk/yberthel/data", self.env_name, agent)
+        copy_to_host_and_delete(
+            values_path + ".json",
+            "yberthel@flanders.gw",
+            os.path.join(target_folder, "values", filename + ".json"),
+        )
         # wandb.log_artifact(
         #     artifact_or_path=values_path + ".json", name=filename, type="value"
         # )  # Logs the artifact version "my_data" as a dataset with data from dataset.h5

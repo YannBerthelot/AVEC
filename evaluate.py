@@ -196,12 +196,12 @@ if __name__ == "__main__":
     number_of_flags = 10
     n_steps = model.n_steps if "PPO" in mode else model.train_freq.frequency
     save_freq = ceil((true_n_timesteps / n_steps) * (1 / number_of_flags)) * n_steps
-
+    target_folder = os.path.join("/mnt/nfs_disk/yberthel/data", env_name, mode)
     filename = f"{env_name}_{mode}_{alpha}_{seed}_{int(save_freq*flag)}"
     copy_from_host(
         os.path.join(folder, filename + ".zip"),
         "flanders.gw",
-        os.path.join("/mnt/nfs_disk/yberthel/data", filename + ".zip"),
+        os.path.join(target_folder, "models", filename + ".zip"),
     )
     assert os.path.exists(os.path.join(folder, filename + ".zip")), f"download failed for {filename}"
 
@@ -209,7 +209,7 @@ if __name__ == "__main__":
     copy_from_host(
         os.path.join(folder, states_filename + ".pkl"),
         "flanders.gw",
-        os.path.join("/mnt/nfs_disk/yberthel/data", states_filename + ".pkl"),
+        os.path.join(target_folder, "states", states_filename + ".pkl"),
     )
     assert os.path.exists(os.path.join(folder, states_filename + ".pkl")), f"download failed for {states_filename}"
     states = read_from_pickle(os.path.join(folder, states_filename))
@@ -243,7 +243,7 @@ if __name__ == "__main__":
             copy_from_host(
                 os.path.join(folder, buffer_filename + ".pkl"),
                 "flanders.gw",
-                os.path.join("/mnt/nfs_disk/yberthel/data", buffer_filename + ".pkl"),
+                os.path.join(target_folder, "replay_buffers", buffer_filename + ".pkl"),
             )
             assert os.path.exists(os.path.join(folder, buffer_filename + ".pkl")), f"download failed for {buffer_filename}"
         buffer_files.append(buffer_filename)
