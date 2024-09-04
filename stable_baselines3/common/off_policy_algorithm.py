@@ -959,17 +959,17 @@ class AvecOffPolicyAlgorithm(BaseAlgorithm):
         else:
             mode = None
 
-        load_artifacts(
-            number_of_flags,
-            self.env_name,
-            correction=self.correction,
-            alpha=self.alpha,
-            seed=self.seed,
-            true_algo_name=TRUE_ALGO_NAME,
-            mode=mode,
-            grads_folder=self.grads_folder,
-            value_folder=self.value_folder,
-        )
+        # load_artifacts(
+        #     number_of_flags,
+        #     self.env_name,
+        #     correction=self.correction,
+        #     alpha=self.alpha,
+        #     seed=self.seed,
+        #     true_algo_name=TRUE_ALGO_NAME,
+        #     mode=mode,
+        #     grads_folder=self.grads_folder,
+        #     value_folder=self.value_folder,
+        # )
 
         n_flags = 1
         while self.num_timesteps < total_timesteps:
@@ -979,10 +979,10 @@ class AvecOffPolicyAlgorithm(BaseAlgorithm):
             pairwise_similarities = []
             avec_pairwise_similarities = []
             self.old_grads = None
-            self.old_avec_grads = None
+            self.old_alternate_grads = None
             self.old_policy_params = None
             grads = None
-            avec_grads = None
+            alternate_grads = None
             if VALUE_FUNCTION_EVAL:
                 assert not GRAD_EVAL
                 n_iterations = 1
@@ -1259,7 +1259,7 @@ class AvecOffPolicyAlgorithm(BaseAlgorithm):
 
         if self.use_sde:
             self.actor.reset_noise(env.num_envs)
-        if update:
+        if update and callback is not None:
             callback.on_rollout_start()
         continue_training = True
 
@@ -1334,7 +1334,7 @@ class AvecOffPolicyAlgorithm(BaseAlgorithm):
             #         alternate_normalized_value_errors=self.alternate_normalized_value_errors,
             #     )
             num_collected_steps += 1
-            if update:
+            if update and callback is not None:
                 # Give access to local variables
                 callback.update_locals(locals())
                 # Only stop training if return value is False, not when it is None.
@@ -1448,7 +1448,7 @@ class AvecOffPolicyAlgorithm(BaseAlgorithm):
         #     self.alternate_value_errors = []
         #     self.alternate_normalized_value_errors = []
 
-        if update:
+        if update and callback is not None:
             callback.on_rollout_end()
         return RolloutReturn(num_collected_steps * env.num_envs, num_collected_episodes, continue_training)
 
@@ -1590,3 +1590,89 @@ class AvecOffPolicyAlgorithm(BaseAlgorithm):
             alternate_value_errors=self.alternate_value_errors,
             alternate_values=self.predicted_alternate_values,
         )
+
+    def collect_rollouts_for_grads(
+        self,
+        timesteps: int,
+        alpha: float = None,
+        n_flags: int = None,
+        number_of_flags: int = None,
+        n_iterations: int = 10,
+        alternate_alpha: float = 0.5,
+    ) -> RolloutReturn:
+        """
+        Collect experiences and store them into a ``ReplayBuffer``.
+
+        :param env: The training environment
+        :param callback: Callback that will be called at each step
+            (and at the beginning and end of the rollout)
+        :param train_freq: How much experience to collect
+            by doing rollouts of current policy.
+            Either ``TrainFreq(<n>, TrainFrequencyUnit.STEP)``
+            or ``TrainFreq(<n>, TrainFrequencyUnit.EPISODE)``
+            with ``<n>`` being an integer greater than 0.
+        :param action_noise: Action noise that will be used for exploration
+            Required for deterministic policy (e.g. TD3). This can also be used
+            in addition to the stochastic policy for SAC.
+        :param learning_starts: Number of steps before learning for the warm-up phase.
+        :param replay_buffer:
+        :param log_interval: Log data every ``log_interval`` episodes
+        :return:
+        """
+        # Switch to eval mode (this affects batch norm / dropout)
+        self.policy.set_training_mode(False)
+        true_grads = compute_or_load_true_grads(
+            self,
+            n_flags,
+            number_of_flags,
+            alpha=alpha,
+        )
+
+        alternate_true_grads = compute_or_load_true_grads(
+            self,
+            n_flags,
+            number_of_flags,
+            alpha=alternate_alpha,
+        )
+        pairwise_similarities, alternate_pairwise_similarities = [], []
+        for num_rollout in range(1, n_iterations + 1):
+            update = num_rollout == n_iterations
+            self.env.reset()
+            rollout = self.collect_rollouts(
+                self.env,
+                train_freq=self.train_freq,
+                action_noise=self.action_noise,
+                callback=None,
+                learning_starts=self.learning_starts,
+                replay_buffer=self.replay_buffer,
+                log_interval=int(1e6),
+                flag=False,
+                update=update,
+                value_function_eval=VALUE_FUNCTION_EVAL,
+                n_flags=n_flags,
+                number_of_flags=number_of_flags,
+                alpha=alpha,
+            )
+
+            if not rollout.continue_training:
+                break
+            if self.num_timesteps > 0 and self.num_timesteps > self.learning_starts:
+                # If no `gradient_steps` is specified,
+                # do as many gradients steps as steps performed during the rollout
+                gradient_steps = self.gradient_steps if self.gradient_steps >= 0 else rollout.episode_timesteps
+                # Special case when the user passes `gradient_steps=0`
+
+                grads, alternate_grads, pairwise_similarities, alternate_pairwise_similarities = evaluate_and_log_grads(
+                    self,
+                    num_rollout,
+                    pairwise_similarities,
+                    alternate_pairwise_similarities,
+                    update,
+                    N_GRADIENT_ROLLOUTS,
+                    true_grads,
+                    alternate_true_grads,
+                    timesteps=timesteps,
+                )
+                self.train(batch_size=self.batch_size, gradient_steps=gradient_steps)
+                self.old_grads = deepcopy(grads)
+                self.old_alternate_grads = deepcopy(alternate_grads)

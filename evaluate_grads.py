@@ -260,6 +260,8 @@ if __name__ == "__main__":
             model.replay_buffer.__dict__[values][lower_idx:uppder_idx] = temp_model.replay_buffer.__dict__[values][
                 lower_idx:uppder_idx
             ]
+        model.replay_buffer.pos = temp_model.replay_buffer.pos
+        model.replay_buffer.full = temp_model.replay_buffer.full
         del temp_model
         os.remove(os.path.join(folder, buffer_filename + ".pkl"))
     os.remove(os.path.join(folder, filename + ".zip"))
@@ -269,9 +271,8 @@ if __name__ == "__main__":
         model.__dict__[param] = value
     model.__dict__["n_eval_rollout_steps"] = N_EVAL_TIMESTEPS
     model.__dict__["n_eval_rollout_envs"] = N_EVAL_ENVS
-    model.collect_rollouts_for_eval(
-        states,
-        model.replay_buffer,
+    model._last_obs = model.replay_buffer.__dict__["next_observations"][-1]
+    model.collect_rollouts_for_grads(
         n_flags=flag,
         number_of_flags=number_of_flags,
         alpha=model.alpha,

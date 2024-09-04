@@ -241,7 +241,7 @@ class AVEC_SAC(AvecOffPolicyAlgorithm):
         self._update_learning_rate(optimizers)
 
         ent_coef_losses, ent_coefs = [], []
-        actor_losses, critic_losses, alternate_critic_losses = [], [], []
+        actor_losses, critic_losses, alternate_critic_losses, alternate_actor_losses = [], [], [], []
 
         for gradient_step in range(gradient_steps):
             # Sample replay buffer
@@ -322,15 +322,16 @@ class AVEC_SAC(AvecOffPolicyAlgorithm):
                     for current_q in current_q_values
                 )
 
-                MSE_critic_loss = 0.5 * sum(F.mse_loss(current_q, target_q_values) for current_q in current_q_values)
             else:  # classic SAC loss
-                critic_loss = 0.5 * sum(F.mse_loss(current_q, target_q_values) for current_q in current_q_values)
-
-                # critic_loss = 0.5 * sum(
-                #     (1 - alpha) * th.var(current_q - target_q_values, unbiased=False)
-                #     + alpha * th.square(th.mean(current_q - target_q_values))
-                #     for current_q in current_q_values
-                # )
+                critic_loss = sum(
+                    (1 - alpha) * th.var(current_q, unbiased=False)
+                    + alpha
+                    * (
+                        th.mean(th.square(th.mean(current_q) - target_q_values))
+                        - 2 * th.cov(th.stack((current_q.reshape(-1), target_q_values.reshape(-1))))[0][1]
+                    )
+                    for current_q in current_q_values
+                )
 
             if COMPARE_VALUE:
                 # alternate_critic_loss = 0.5 * sum(
@@ -338,7 +339,7 @@ class AVEC_SAC(AvecOffPolicyAlgorithm):
                 #     + alternate_alpha * th.square(th.mean(current_q - alternate_target_q_values))
                 #     for current_q in alternate_current_q_values
                 # )
-                alternate_critic_loss = 0.25 * sum(
+                alternate_critic_loss = 0.5 * sum(
                     F.mse_loss(current_q, alternate_target_q_values) for current_q in alternate_current_q_values
                 )
                 alternate_critic_losses.append(alternate_critic_loss.item())  # type: ignore[union-attr]
@@ -349,12 +350,13 @@ class AVEC_SAC(AvecOffPolicyAlgorithm):
             self.critic.optimizer.zero_grad()
             critic_loss.backward()
             grads = get_grad_from_net(self.critic)
+            if COMPARE_VALUE:
+                self.alternate_critic.optimizer.zero_grad()
+                alternate_critic_loss.backward()
+                alternate_grads = get_grad_from_net(self.critic)
             if update:
-
                 self.critic.optimizer.step()
                 if COMPARE_VALUE:
-                    self.alternate_critic.optimizer.zero_grad()
-                    alternate_critic_loss.backward()
                     self.alternate_critic.optimizer.step()
 
             # Compute actor loss
@@ -365,11 +367,22 @@ class AVEC_SAC(AvecOffPolicyAlgorithm):
             corrected_min_qf_pi = min_qf_pi + correction_term
             actor_loss = (ent_coef * log_prob - corrected_min_qf_pi).mean()
             actor_losses.append(actor_loss.item())
+            if COMPARE_VALUE:
+                q_values_pi = th.cat(self.alternate_critic(replay_data.observations, actions_pi), dim=1)
+                min_qf_pi, _ = th.min(q_values_pi, dim=1, keepdim=True)
+                corrected_min_qf_pi = min_qf_pi + correction_term
+                alternate_actor_loss = (ent_coef * log_prob - corrected_min_qf_pi).mean()
+                alternate_actor_losses.append(alternate_actor_loss.item())
 
             # Optimize the actor
             self.actor.optimizer.zero_grad()
+            alternate_actor_loss.backward(retain_graph=True)
+            self.alternate_grads = get_grad_from_net(self.actor, alternate_grads)
+
+            self.actor.optimizer.zero_grad()
             actor_loss.backward()
             self.grads = get_grad_from_net(self.actor, grads)
+
             if update:
                 self.actor.optimizer.step()
 
@@ -392,6 +405,7 @@ class AVEC_SAC(AvecOffPolicyAlgorithm):
             self.logger.record("train/actor_loss", np.mean(actor_losses))
             self.logger.record("train/critic_loss", np.mean(critic_losses))
             self.logger.record("train/alternate_critic_loss", np.mean(alternate_critic_losses))
+            self.logger.record("train/alternate_actor_loss", np.mean(alternate_actor_losses))
             if len(ent_coef_losses) > 0:
                 self.logger.record("train/ent_coef_loss", np.mean(ent_coef_losses))
 

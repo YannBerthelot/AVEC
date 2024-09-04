@@ -20,6 +20,8 @@ from scipy.stats import kendalltau
 from stable_baselines3.common.type_aliases import RolloutReturn
 from pathlib import Path
 
+from stable_baselines3.common.vec_env import SubprocVecEnv
+
 
 def copy_to_host_and_delete(source_file: Path, host: str, host_file: Path) -> None:
     os.system("source /home/yberthel/AVEC/venv/bin/activate")
@@ -91,7 +93,12 @@ def get_fixed_reset_state_env(env_name: str, num_envs: int, states):
         wrapper = MujocoResetWrapper
     else:
         wrapper = ClassicControlWrapper
-    env = make_vec_env(env_id=env_name, n_envs=num_envs, wrapper_class=wrapper, wrapper_kwargs={"state": states})
+    env = make_vec_env(
+        env_id=env_name,
+        n_envs=num_envs,
+        wrapper_class=wrapper,
+        wrapper_kwargs={"state": states},  # , vec_env_cls=SubprocVecEnv
+    )
 
     # env = make_vec_env(MujocoResetWrapper, n_envs=num_envs, env_kwargs={"env": env, "state": states})
     return env
@@ -260,59 +267,66 @@ def compute_or_load_true_grads(
     return true_grads
 
 
+def compute_mean_pairwise_cosim_between_grads(grad_1, grad_2):
+    pairwise_cosine_sim = compute_pairwise_from_grads(grad_1, grad_2)
+    return np.mean(pairwise_cosine_sim)
+
+
 def evaluate_and_log_grads(
     self,
     num_rollout,
     pairwise_similarities,
-    avec_pairwise_similarities,
+    alternate_pairwise_similarities,
     update,
     n_gradient_rollouts,
     true_grads,
-    avec_true_grads,
+    alternate_true_grads,
+    timesteps,
 ):
     if "PPO" in self.true_algo_name:
         self.train(update=False, n_epochs=1)
         grads = deepcopy(self.grads)
         self.train(update=False, n_epochs=1, alpha=0.0)
-        avec_grads = deepcopy(self.grads)
+        alternate_grads = deepcopy(self.grads)
     else:
         self.train(update=False, gradient_steps=1)
         grads = deepcopy(self.grads)
-        self.train(update=False, gradient_steps=1, alpha=0.0)
-        avec_grads = deepcopy(self.grads)
+        alternate_grads = deepcopy(self.alternate_grads)
     if self.old_grads is not None:
         pairwise_cosine_sim = compute_pairwise_from_grads(grads, self.old_grads)
-        avec_pairwise_cosine_sim = compute_pairwise_from_grads(avec_grads, self.old_avec_grads)
+        alternate_pairwise_cosine_sim = compute_pairwise_from_grads(alternate_grads, self.old_alternate_grads)
         pairwise_similarities.append(np.mean(pairwise_cosine_sim))
-        avec_pairwise_similarities.append(np.mean(avec_pairwise_cosine_sim))
+        alternate_pairwise_similarities.append(np.mean(alternate_pairwise_cosine_sim))
     if num_rollout == 1:  # TODO : check that it goes as intended
         if "PPO" in self.true_algo_name:
             self.train(update=False, n_epochs=1, alpha=self.alpha)
         else:
             self.train(update=False, batch_size=self.batch_size, gradient_steps=1, alpha=self.alpha)
-        true_gradient_pairwise_cosine_sim = compute_pairwise_from_grads(self.grads, true_grads)
-        average_true_gradient_pairwise_cosine_sim = np.mean(true_gradient_pairwise_cosine_sim)
-        if "PPO" in self.true_algo_name:
-            self.train(update=False, n_epochs=1, alpha=self.alpha)
-        else:
-            self.train(update=False, batch_size=self.batch_size, gradient_steps=1, alpha=self.alpha)
-        avec_true_gradient_pairwise_cosine_sim = compute_pairwise_from_grads(self.grads, true_grads)
-        avec_average_true_gradient_pairwise_cosine_sim = np.mean(avec_true_gradient_pairwise_cosine_sim)
-        avec_avec_true_gradient_pairwise_cosine_sim = compute_pairwise_from_grads(self.grads, avec_true_grads)
-        avec_avec_average_true_gradient_pairwise_cosine_sim = np.mean(avec_avec_true_gradient_pairwise_cosine_sim)
-        self.logger.record("gradients/convergence to the true gradients", average_true_gradient_pairwise_cosine_sim)
-        self.logger.record("gradients/avec convergence to the true gradients", avec_average_true_gradient_pairwise_cosine_sim)
+
         self.logger.record(
-            "gradients/avec convergence to the true avec gradients",
-            avec_avec_average_true_gradient_pairwise_cosine_sim,
+            "gradients/convergence of the gradients to the true gradients",
+            compute_mean_pairwise_cosim_between_grads(self.grads, true_grads),
         )
+        self.logger.record(
+            "gradients/convergence of the alternate gradients to the true gradients",
+            compute_mean_pairwise_cosim_between_grads(self.alternate_grads, true_grads),
+        )
+        self.logger.record(
+            "gradients/convergence of the alternate gradients to the true alternate gradients",
+            compute_mean_pairwise_cosim_between_grads(self.alternate_grads, alternate_true_grads),
+        )
+        self.logger.record(
+            "gradients/convergence of the gradients to the true alternate gradients",
+            compute_mean_pairwise_cosim_between_grads(self.grads, alternate_true_grads),
+        )
+
     if update:
         assert len(pairwise_similarities) == n_gradient_rollouts - 1, f"{len(pairwise_similarities)}"
         self.logger.record("gradients/average pairwise cosine sim", np.mean(pairwise_similarities))
-        self.logger.record("gradients/avec average pairwise cosine sim", np.mean(avec_pairwise_similarities))
+        self.logger.record("gradients/alternate average pairwise cosine sim", np.mean(alternate_pairwise_similarities))
 
-        self.logger.dump(step=self.num_timesteps)
-    return grads, avec_grads, pairwise_similarities, avec_pairwise_similarities
+        self.logger.dump(step=timesteps)
+    return grads, alternate_grads, pairwise_similarities, alternate_pairwise_similarities
 
 
 def compute_true_values(self, state, action=None):
@@ -333,6 +347,7 @@ def compute_true_values(self, state, action=None):
             action,
             n_rollout_steps=self.n_eval_rollout_steps,
         )
+
     states_values_MC = eval_buffer.returns[eval_buffer.episode_starts.astype("bool")]
     nb_full_episodes = eval_buffer.episode_starts.sum() - 1
     states_values_MC = (
@@ -531,7 +546,7 @@ def collect_rollouts_MC_from_state_and_actions(
         self.actor.reset_noise(env.num_envs)
     from tqdm import tqdm
 
-    for n_steps in tqdm(range(0, n_rollout_steps, num_envs)):
+    for num_collected_steps in tqdm(range(0, n_rollout_steps, num_envs)):
         # while n_steps < n_rollout_steps:
         if self.use_sde and self.sde_sample_freq > 0 and num_collected_steps % self.sde_sample_freq == 0:
             # Sample a new noise matrix
@@ -705,7 +720,9 @@ def ranking_and_error_logging(
 
         self.logger.record("values/alternate predicted value mean", np.mean(alternate_values))
         self.logger.record("values/alternate predicted value std", np.std(alternate_values))
+    import pdb
 
+    pdb.set_trace()
     self.logger.dump(step=self.num_timesteps)
     corrected = "CORRECTED_" if self.correction else ""
     mode = f"{corrected}AVEC_{self.true_algo_name}"
