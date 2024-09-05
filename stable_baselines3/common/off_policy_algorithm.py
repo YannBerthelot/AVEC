@@ -1501,7 +1501,7 @@ class AvecOffPolicyAlgorithm(BaseAlgorithm):
                 replay_buffer.dones[i],
             )
             next_action = replay_buffer.actions[i + 1]
-            true_value, MC_episode_length, nb_full_episode = evaluate_value_function(
+            MC_values, MC_episode_length, nb_full_episode = evaluate_value_function(
                 self,
                 state,
                 n_flags,
@@ -1536,7 +1536,7 @@ class AvecOffPolicyAlgorithm(BaseAlgorithm):
             current_q_values, _ = th.min(current_q_values, dim=1, keepdim=True)
             # add entropy term
             current_q_values = current_q_values - ent_coef * current_log_prob.reshape(-1, 1)
-
+            true_value = MC_values.mean(axis=0)
             predicted_value = current_q_values.detach().numpy()[0]
             value_error = (true_value - predicted_value) ** 2
             normalized_value_error = value_error / (true_value**2)
@@ -1544,6 +1544,7 @@ class AvecOffPolicyAlgorithm(BaseAlgorithm):
             deltas.append(target_q_values - predicted_value)
             self.predicted_values.append(predicted_value)
             self.true_values.append(true_value)
+            self.MC_values.append(MC_values)
             self.value_errors.append(value_error)
             self.normalized_value_errors.append(normalized_value_error)
 
@@ -1591,6 +1592,7 @@ class AvecOffPolicyAlgorithm(BaseAlgorithm):
             alternate_normalized_value_errors=self.alternate_normalized_value_errors,
             alternate_value_errors=self.alternate_value_errors,
             alternate_values=self.predicted_alternate_values,
+            MC_values=self.MC_values
         )
 
     def collect_rollouts_for_grads(

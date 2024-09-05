@@ -366,38 +366,38 @@ def compute_or_load_true_values(
     self, state, n_flags: int, number_of_flags: int, alpha: float, state_idx: int, true_algo_name: str, action=None
 ) -> list:
     os.makedirs(self.value_folder, exist_ok=True)
-    training_frac = int((n_flags - 1) * 100 / number_of_flags)
-    algo_name = f"CORRECTED_AVEC_{true_algo_name}" if self.correction else f"AVEC_{true_algo_name}"
-    filename = f"value_{self.env_name}_{algo_name}_{alpha}_{self.seed}_{training_frac}_{state_idx}_{self.n_eval_rollout_envs}_{self.n_eval_rollout_steps}"
-    if filename not in os.listdir(self.value_folder):
-        states_values_MC, MC_episode_lengths, nb_full_episodes = compute_true_values(self, state, action)
-        values_path = os.path.join(self.value_folder, filename)
-        save_to_json(
-            {
-                "value": states_values_MC if isinstance(states_values_MC, list) else states_values_MC.tolist(),
-                "episode_length": (
-                    MC_episode_lengths if isinstance(MC_episode_lengths, list) else MC_episode_lengths.tolist()
-                ),
-                "nb_full_episodes": nb_full_episodes,
-            },
-            values_path,
-        )
-        agent = self.true_algo_name
-        if self.AVEC:
-            agent = f"AVEC_{agent}"
-        if self.correction:
-            agent = f"CORRECTED_{agent}"
-        target_folder = os.path.join("/mnt/nfs_disk/yberthel/data", self.env_name, agent)
-        copy_to_host_and_delete(
-            values_path + ".json",
-            "yberthel@flanders.gw",
-            os.path.join(target_folder, "values", filename + ".json"),
-        )
-        # wandb.log_artifact(
-        #     artifact_or_path=values_path + ".json", name=filename, type="value"
-        # )  # Logs the artifact version "my_data" as a dataset with data from dataset.h5
-    else:
-        states_values_MC, MC_episode_lengths, nb_full_episodes = read_from_json(filename).values()
+    # training_frac = int((n_flags - 1) * 100 / number_of_flags)
+    # algo_name = f"CORRECTED_AVEC_{true_algo_name}" if self.correction else f"AVEC_{true_algo_name}"
+    # filename = f"value_{self.env_name}_{algo_name}_{alpha}_{self.seed}_{training_frac}_{state_idx}_{self.n_eval_rollout_envs}_{self.n_eval_rollout_steps}"
+    # if filename not in os.listdir(self.value_folder):
+    states_values_MC, MC_episode_lengths, nb_full_episodes = compute_true_values(self, state, action)
+    #     values_path = os.path.join(self.value_folder, filename)
+    #     save_to_json(
+    #         {
+    #             "value": states_values_MC if isinstance(states_values_MC, list) else states_values_MC.tolist(),
+    #             "episode_length": (
+    #                 MC_episode_lengths if isinstance(MC_episode_lengths, list) else MC_episode_lengths.tolist()
+    #             ),
+    #             "nb_full_episodes": nb_full_episodes,
+    #         },
+    #         values_path,
+    #     )
+    #     # agent = self.true_algo_name
+    #     # if self.AVEC:
+    #     #     agent = f"AVEC_{agent}"
+    #     # if self.correction:
+    #     #     agent = f"CORRECTED_{agent}"
+    #     # target_folder = os.path.join("/mnt/nfs_disk/yberthel/data", self.env_name, agent)
+    #     # copy_to_host_and_delete(
+    #     #     values_path + ".json",
+    #     #     "yberthel@flanders.gw",
+    #     #     os.path.join(target_folder, "values", filename + ".json"),
+    #     # )
+    #     # wandb.log_artifact(
+    #     #     artifact_or_path=values_path + ".json", name=filename, type="value"
+    #     # )  # Logs the artifact version "my_data" as a dataset with data from dataset.h5
+    # else:
+    #     states_values_MC, MC_episode_lengths, nb_full_episodes = read_from_json(filename).values()
     return states_values_MC, MC_episode_lengths, nb_full_episodes
 
 
@@ -622,7 +622,7 @@ def evaluate_value_function(
     states_values_MC, MC_episode_lengths, nb_full_episodes = compute_or_load_true_values(
         self, state, n_flags, number_of_flags, alpha, state_idx=n_steps, true_algo_name=true_algo_name, action=action
     )  # TODO : adapt for q values
-    return states_values_MC.mean(axis=0), MC_episode_lengths, nb_full_episodes
+    return states_values_MC, MC_episode_lengths, nb_full_episodes
     assert (np.sum(np.isnan(states_values_MC)) == 0) and len(states_values_MC) > 0, f"{states_values_MC=}"
     MC_values = np.concatenate((MC_values, states_values_MC), axis=None)
     predicted_values.append(values.detach().numpy()[0])
@@ -664,6 +664,7 @@ def ranking_and_error_logging(
     timesteps=None,
     MC_episode_lengths=None,
     nb_full_episodes=None,
+    MC_values=None,
 ):
     kendal_tau = kendalltau(np.array(predicted_values), np.array(true_values))
     kendal_tau_stat = kendal_tau.statistic
@@ -726,9 +727,14 @@ def ranking_and_error_logging(
     name_prefix = f"{self.env_name}_{mode}_{self.alpha}_{self.seed}"
     filename = f"{name_prefix}_{timesteps}"
     value_length_episodes_json = {
-        "value": true_values if isinstance(true_values, list) else true_values.tolist(),
+        "true_values": true_values if isinstance(true_values, list) else true_values.tolist(),
         "episode_length": MC_episode_lengths if isinstance(MC_episode_lengths, list) else MC_episode_lengths.tolist(),
         "nb_full_episodes": nb_full_episodes,
+        "values": predicted_values,
+        "alternate_values": alternate_values,
+        "deltas": deltas,
+        "alternate_deltas": alternate_deltas,
+        "MC_values": MC_values,
     }
     save_to_json(str(value_length_episodes_json), filename)
     copy_to_host_and_delete(
