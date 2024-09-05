@@ -242,7 +242,7 @@ def get_true_grads_from_policy(self, alpha: float, env_name: str, num_envs: int 
             update=False,
             value_function_eval=False,
         )
-        self.train(update=False, gradient_steps=1, alpha=alpha, batch_size=self.batch_size)
+        self.train(update=False, gradient_steps=1, alpha=alpha, batch_size=n_rollout_steps)
 
     return deepcopy(self.grads)
 
@@ -720,10 +720,7 @@ def ranking_and_error_logging(
 
         self.logger.record("values/alternate predicted value mean", np.mean(alternate_values))
         self.logger.record("values/alternate predicted value std", np.std(alternate_values))
-    import pdb
-
-    pdb.set_trace()
-    self.logger.dump(step=self.num_timesteps)
+    self.logger.dump(step=timesteps)
     corrected = "CORRECTED_" if self.correction else ""
     mode = f"{corrected}AVEC_{self.true_algo_name}"
     name_prefix = f"{self.env_name}_{mode}_{self.alpha}_{self.seed}"

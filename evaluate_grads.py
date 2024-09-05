@@ -272,15 +272,21 @@ if __name__ == "__main__":
     model.__dict__["n_eval_rollout_steps"] = N_EVAL_TIMESTEPS
     model.__dict__["n_eval_rollout_envs"] = N_EVAL_ENVS
     model._last_obs = model.replay_buffer.__dict__["next_observations"][-1]
-    grads, alternate_grads, true_grads, alternate_true_grads = model.collect_rollouts_for_grads(
+    grads, alternate_grads, true_grads, alternate_true_grads, var_grad, alternate_var_grad = model.collect_rollouts_for_grads(
         n_flags=flag,
         number_of_flags=number_of_flags,
         alpha=model.alpha,
         timesteps=flag * save_freq,
+        n_rollout_timesteps=N_EVAL_TIMESTEPS,
     )
 
     def grad_to_list(grads):
-        return [grad.tolist() for grad in grads]
+        if isinstance(grads[0], torch.Tensor):
+            return [grad.tolist() for grad in grads]
+        else:
+            for i, grad in enumerate(grads):
+                grads[i] = grad_to_list(grad)
+            return grads
 
     grads_dict = {
         "grads": grad_to_list(grads),
@@ -290,6 +296,9 @@ if __name__ == "__main__":
     }
     filename = f"grads_{env_name}_{mode}_{alpha}_{seed}_{flag*save_freq}"
     save_to_json(grads_dict, filename)
+    import pdb
+
+    pdb.set_trace()
     copy_to_host_and_delete(
         filename + ".json",
         "yberthel@flanders.gw",

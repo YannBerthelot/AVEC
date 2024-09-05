@@ -567,6 +567,7 @@ class OffPolicyAlgorithm(BaseAlgorithm):
         callback.on_rollout_start()
         continue_training = True
         while should_collect_more_steps(train_freq, num_collected_steps, num_collected_episodes):
+            print(num_collected_steps)
             if self.use_sde and self.sde_sample_freq > 0 and num_collected_steps % self.sde_sample_freq == 0:
                 # Sample a new noise matrix
                 self.actor.reset_noise(env.num_envs)
@@ -1276,6 +1277,7 @@ class AvecOffPolicyAlgorithm(BaseAlgorithm):
             train_freq = TrainFreq(n_rollout_steps, unit=TrainFrequencyUnit.STEP)
             assert n_rollout_steps <= replay_buffer.buffer_size
         while should_collect_more_steps(train_freq, num_collected_steps, num_collected_episodes):
+            print(num_collected_steps)
             if self.use_sde and self.sde_sample_freq > 0 and num_collected_steps % self.sde_sample_freq == 0:
                 # Sample a new noise matrix
                 self.actor.reset_noise(env.num_envs)
@@ -1599,6 +1601,7 @@ class AvecOffPolicyAlgorithm(BaseAlgorithm):
         number_of_flags: int = None,
         n_iterations: int = 10,
         alternate_alpha: float = 0.5,
+        n_rollout_timesteps: float = int(1e6),
     ) -> RolloutReturn:
         """
         Collect experiences and store them into a ``ReplayBuffer``.
@@ -1621,6 +1624,7 @@ class AvecOffPolicyAlgorithm(BaseAlgorithm):
         """
         # Switch to eval mode (this affects batch norm / dropout)
         self.policy.set_training_mode(False)
+        self.n_eval_rollout_steps = n_rollout_timesteps
         true_grads = compute_or_load_true_grads(
             self,
             n_flags,
@@ -1635,9 +1639,13 @@ class AvecOffPolicyAlgorithm(BaseAlgorithm):
             alpha=alternate_alpha,
         )
         pairwise_similarities, alternate_pairwise_similarities = [], []
-        for num_rollout in range(1, n_iterations + 1):
+        grads_list, alternate_grads_list = [], []
+        from tqdm import tqdm
+
+        for num_rollout in tqdm(range(1, n_iterations + 1)):
             update = num_rollout == n_iterations
             self.env.reset()
+
             rollout = self.collect_rollouts(
                 self.env,
                 train_freq=self.train_freq,
@@ -1647,7 +1655,7 @@ class AvecOffPolicyAlgorithm(BaseAlgorithm):
                 replay_buffer=self.replay_buffer,
                 log_interval=int(1e6),
                 flag=False,
-                update=update,
+                update=False,
                 value_function_eval=VALUE_FUNCTION_EVAL,
                 n_flags=n_flags,
                 number_of_flags=number_of_flags,
@@ -1673,7 +1681,19 @@ class AvecOffPolicyAlgorithm(BaseAlgorithm):
                     alternate_true_grads,
                     timesteps=timesteps,
                 )
+                grads_list.append(grads)
+                alternate_grads_list.append(alternate_grads)
                 self.train(batch_size=self.batch_size, gradient_steps=gradient_steps)
                 self.old_grads = deepcopy(grads)
                 self.old_alternate_grads = deepcopy(alternate_grads)
-        return self.old_grads, self.old_alternate_grads, true_grads, alternate_true_grads
+        var_grad = np.var(pairwise_similarities)
+        self.logger.record(
+            "gradients/variance of the gradients",
+            var_grad,
+        )
+        alternate_var_grad = np.var(alternate_pairwise_similarities)
+        self.logger.record(
+            "gradients/variance of the alternate gradients",
+            alternate_var_grad,
+        )
+        return grads_list, alternate_grads_list, true_grads, alternate_true_grads, var_grad, alternate_var_grad
