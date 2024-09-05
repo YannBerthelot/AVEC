@@ -1676,3 +1676,4 @@ class AvecOffPolicyAlgorithm(BaseAlgorithm):
                 self.train(batch_size=self.batch_size, gradient_steps=gradient_steps)
                 self.old_grads = deepcopy(grads)
                 self.old_alternate_grads = deepcopy(alternate_grads)
+        return self.old_grads, self.old_alternate_grads, true_grads, alternate_true_grads

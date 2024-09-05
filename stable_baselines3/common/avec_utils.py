@@ -25,7 +25,7 @@ from stable_baselines3.common.vec_env import SubprocVecEnv
 
 def copy_to_host_and_delete(source_file: Path, host: str, host_file: Path) -> None:
     os.system("source /home/yberthel/AVEC/venv/bin/activate")
-    os.system(f"scp -r {source_file} {host}:{host_file}")
+    os.system(f"scp -r {source_file} {host}:{host_file} && echo 'copy of {host_file} is a success' ")
     if os.path.exists(source_file):
         os.remove(source_file)
 
