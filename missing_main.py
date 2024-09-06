@@ -144,6 +144,7 @@ if __name__ == "__main__":
             "rollout size factor": n_steps_factor,
             "critic network size factor": network_size_factor,
             "alpha": alpha,
+            "type_of_job": "train",
         },
     )
     os.system("wandb artifact cache cleanup 1GB")

@@ -39,11 +39,6 @@ def copy_to_host_and_delete(source_file: Path, host: str, host_file: Path) -> No
         os.remove(source_file)
 
 
-def sync_wandb():
-    os.system(f"wandb sync --sync-all && echo success")
-    # os.system(f"source /home/yberthel/AVEC/venv/bin/activate && wandb sync --sync-all && echo success")
-
-
 class BaseCallback(ABC):
     """
     Base class for callback.

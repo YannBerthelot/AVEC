@@ -95,6 +95,24 @@ if __name__ == "__main__":
     N_SAMPLES_MC = int(sys.argv[9])
     N_EVAL_ENVS = int(sys.argv[10])
     flag = int(sys.argv[11])
+    run = wandb.init(
+        project="avec experiments sac 5",
+        sync_tensorboard=True,
+        config={
+            "agent": mode,
+            "mode": mode,
+            "env": env_name,
+            "seed": seed,
+            "rollout size factor": n_steps_factor,
+            "critic network size factor": network_size_factor,
+            "alpha": alpha,
+            "type_of_job": "evaluate",
+        },
+        # resume_from=f"{run_id}?_step={flag}" if flag != 1 else None,
+        # resume="must" if flag != 1 else None,
+        # id=run_id if flag != 1 else None,
+        mode="offline",
+    )
     for flag in range(1, 11):
         num_threads = int(psutil.cpu_count() / psutil.cpu_count(logical=False))
         torch.set_num_threads(num_threads)
@@ -139,19 +157,8 @@ if __name__ == "__main__":
                     activation_fn=nn.ReLU,
                 )
 
-        run = wandb.init(
-            project="avec experiments sac 5",
-            sync_tensorboard=True,
-            config={
-                "agent": mode,
-                "mode": mode,
-                "env": env_name,
-                "seed": seed,
-                "rollout size factor": n_steps_factor,
-                "critic network size factor": network_size_factor,
-                "alpha": alpha,
-            },
-        )
+        if flag == 1:
+            run_id = run.id
         env = make_vec_env(env_name, n_envs=n_envs)
         if normalize:
             env = VecNormalize(env, gamma=hyperparams["gamma"] if "gamma" in hyperparams.keys() else 0.99)
@@ -245,7 +252,7 @@ if __name__ == "__main__":
                     "flanders.gw",
                     os.path.join(target_folder, "replay_buffers", buffer_filename + ".pkl"),
                 )
-                assert os.path.exists(os.path.join(folder, buffer_filename + ".pkl")), f"download failed for {buffer_filename}"
+            assert os.path.exists(os.path.join(folder, buffer_filename + ".pkl")), f"download failed for {buffer_filename}"
             buffer_files.append(buffer_filename)
 
         number_of_files_needed = ceil(flag * save_freq / model.replay_buffer.buffer_size)
@@ -261,7 +268,7 @@ if __name__ == "__main__":
                     lower_idx:uppder_idx
                 ]
             del temp_model
-            os.remove(os.path.join(folder, buffer_filename + ".pkl"))
+
         os.remove(os.path.join(folder, filename + ".zip"))
         if len(os.listdir(folder)) == 0:
             shutil.rmtree(folder)
@@ -277,3 +284,17 @@ if __name__ == "__main__":
             alpha=model.alpha,
             timesteps=flag * save_freq,
         )
+
+        run_path = "/" + os.path.join(*run.dir.split("/")[:-1])
+        if not (os.path.exists(run_path)):
+            wandb_folder = "/" + os.path.join(*run.dir.split("/")[:-2])
+            if f"run-{run.id}.wandb" in os.listdir(os.path.join(wandb_folder, "latest-run")):
+                run_path = os.path.join(wandb_folder, "latest-run")
+            else:
+                raise ValueError(f"Run {run.id} could not be found")
+    run.finish()
+    os.remove(os.path.join(folder, buffer_filename + ".pkl"))
+    os.system(f"wandb sync {run_path}")
+    os.system(f"wandb sync --clean --include-offline --clean-force {run_path}")
+    # else:
+    #     os.system(f"wandb sync --sync-tensorboard {run_path} --append --id {run.id}")
