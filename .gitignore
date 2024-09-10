@@ -51,3 +51,9 @@ MUJOCO_LOG.TXT
 wandb
 runs
 *tensorboard*
+*.csv
+*.ipynb
+*.json
+analysis
+results_figs
+*.png

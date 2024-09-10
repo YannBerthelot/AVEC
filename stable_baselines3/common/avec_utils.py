@@ -729,12 +729,12 @@ def ranking_and_error_logging(
     value_length_episodes_json = {
         "true_values": true_values if isinstance(true_values, list) else true_values.tolist(),
         "episode_length": MC_episode_lengths if isinstance(MC_episode_lengths, list) else MC_episode_lengths.tolist(),
-        "nb_full_episodes": nb_full_episodes,
-        "values": predicted_values,
-        "alternate_values": alternate_values,
-        "deltas": deltas,
-        "alternate_deltas": alternate_deltas,
-        "MC_values": MC_values,
+        "nb_full_episodes": nb_full_episodes if isinstance(nb_full_episodes, list) else nb_full_episodes.tolist(),
+        "values": predicted_values if isinstance(predicted_values, list) else predicted_values.tolist(),
+        "alternate_values": alternate_values if isinstance(alternate_values, list) else alternate_values.tolist(),
+        "deltas": deltas if isinstance(deltas, list) else deltas.tolist(),
+        "alternate_deltas": alternate_deltas if isinstance(alternate_deltas, list) else alternate_deltas.tolist(),
+        "MC_values": MC_values if isinstance(MC_values, list) else MC_values.tolist(),
     }
     save_to_json(str(value_length_episodes_json), filename)
     copy_to_host_and_delete(

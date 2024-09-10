@@ -108,9 +108,6 @@ if __name__ == "__main__":
             "alpha": alpha,
             "type_of_job": "evaluate",
         },
-        # resume_from=f"{run_id}?_step={flag}" if flag != 1 else None,
-        # resume="must" if flag != 1 else None,
-        # id=run_id if flag != 1 else None,
         mode="offline",
     )
     for flag in range(1, 11):
@@ -294,7 +291,7 @@ if __name__ == "__main__":
                 raise ValueError(f"Run {run.id} could not be found")
     run.finish()
     os.remove(os.path.join(folder, buffer_filename + ".pkl"))
-    os.system(f"wandb sync {run_path}")
-    os.system(f"wandb sync --clean --include-offline --clean-force {run_path}")
+    os.system(f"source /home/yberthel/AVEC/venv/bin/activate && wandb sync {run_path}")
+    # os.system(f"wandb sync --clean --include-offline --clean-force {run_path}")
     # else:
     #     os.system(f"wandb sync --sync-tensorboard {run_path} --append --id {run.id}")
