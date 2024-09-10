@@ -292,6 +292,7 @@ if __name__ == "__main__":
     run.finish()
     os.remove(os.path.join(folder, buffer_filename + ".pkl"))
     os.system(f"source /home/yberthel/AVEC/venv/bin/activate && wandb sync {run_path}")
+    os.system(f". /home/yberthel/AVEC/venv/bin/activate && wandb sync {run_path}")
     # os.system(f"wandb sync --clean --include-offline --clean-force {run_path}")
     # else:
     #     os.system(f"wandb sync --sync-tensorboard {run_path} --append --id {run.id}")
