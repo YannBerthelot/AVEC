@@ -726,17 +726,36 @@ def ranking_and_error_logging(
     mode = f"{corrected}AVEC_{self.true_algo_name}"
     name_prefix = f"{self.env_name}_{mode}_{self.alpha}_{self.seed}"
     filename = f"{name_prefix}_{timesteps}"
+
+    def array_to_list(array):
+        if isinstance(array, list):
+            for i, sub_array in enumerate(array):
+                array[i] = array_to_list(sub_array)
+            return array
+        elif isinstance(array, np.ndarray):
+            return array.tolist()
+        elif isinstance(array, (np.float32, np.int32)):
+            return array.item()
+        else:
+            return array
+
+    def serialize(dict_to_ser):
+        for key, val in dict_to_ser.items():
+            dict_to_ser[key] = array_to_list(val)
+        return dict_to_ser
+
     value_length_episodes_json = {
-        "true_values": true_values if isinstance(true_values, list) else true_values.tolist(),
-        "episode_length": MC_episode_lengths if isinstance(MC_episode_lengths, list) else MC_episode_lengths.tolist(),
-        "nb_full_episodes": nb_full_episodes if isinstance(nb_full_episodes, list) else nb_full_episodes.tolist(),
-        "values": predicted_values if isinstance(predicted_values, list) else predicted_values.tolist(),
-        "alternate_values": alternate_values if isinstance(alternate_values, list) else alternate_values.tolist(),
-        "deltas": deltas if isinstance(deltas, list) else deltas.tolist(),
-        "alternate_deltas": alternate_deltas if isinstance(alternate_deltas, list) else alternate_deltas.tolist(),
-        "MC_values": MC_values if isinstance(MC_values, list) else MC_values.tolist(),
+        "true_values": true_values,
+        "episode_length": MC_episode_lengths,
+        "nb_full_episodes": nb_full_episodes,
+        "values": predicted_values,
+        "alternate_values": alternate_values,
+        "deltas": deltas,
+        "alternate_deltas": alternate_deltas,
+        "MC_values": MC_values,
     }
-    save_to_json(str(value_length_episodes_json), filename)
+    value_length_episodes_json = serialize(value_length_episodes_json)
+    save_to_json(value_length_episodes_json, filename)
     copy_to_host_and_delete(
         filename + ".json",
         "flanders.gw",
