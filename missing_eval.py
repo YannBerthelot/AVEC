@@ -97,6 +97,19 @@ if __name__ == "__main__":
         N_EVAL_ENVS,
         flag,
     ) = full_input.split(" ")
+    seed = int(seed)
+    env_name = str(env_name)
+    mode = str(mode)
+    assert "PPO" in mode or "SAC" in mode, f"Unrecognized mode {mode}"
+    n_steps_factor = float(n_steps_factor)
+    network_size_factor = float(network_size_factor)
+    alpha = float(alpha)
+    n_timesteps_user = int(eval(n_timesteps_user))
+    N_EVAL_TIMESTEPS = int(eval(N_EVAL_TIMESTEPS))
+    N_SAMPLES_MC = int(N_SAMPLES_MC)
+    N_EVAL_ENVS = int(N_EVAL_ENVS)
+    flag = int(flag)
+
     run = wandb.init(
         project="avec experiments sac 5 local",
         sync_tensorboard=True,
