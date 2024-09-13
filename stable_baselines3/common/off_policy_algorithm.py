@@ -1491,7 +1491,7 @@ class AvecOffPolicyAlgorithm(BaseAlgorithm):
         alternate_deltas = []
         MC_episode_lengths = []
         nb_full_episodes = []
-        for i in tqdm(self.samples):
+        for i in self.samples:
             state = states[i]
             action, observation, next_observation, reward, done = (
                 replay_buffer.actions[i],
@@ -1592,7 +1592,7 @@ class AvecOffPolicyAlgorithm(BaseAlgorithm):
             alternate_normalized_value_errors=self.alternate_normalized_value_errors,
             alternate_value_errors=self.alternate_value_errors,
             alternate_values=self.predicted_alternate_values,
-            MC_values=self.MC_values
+            MC_values=self.MC_values,
         )
 
     def collect_rollouts_for_grads(
@@ -1642,9 +1642,8 @@ class AvecOffPolicyAlgorithm(BaseAlgorithm):
         )
         pairwise_similarities, alternate_pairwise_similarities = [], []
         grads_list, alternate_grads_list = [], []
-        from tqdm import tqdm
 
-        for num_rollout in tqdm(range(1, n_iterations + 1)):
+        for num_rollout in range(1, n_iterations + 1):
             update = num_rollout == n_iterations
             self.env.reset()
 

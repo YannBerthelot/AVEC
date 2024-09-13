@@ -94,9 +94,10 @@ if __name__ == "__main__":
     N_EVAL_TIMESTEPS = int(eval(sys.argv[8]))
     N_SAMPLES_MC = int(sys.argv[9])
     N_EVAL_ENVS = int(sys.argv[10])
-    flag = int(sys.argv[11])
+    asked_flag = int(sys.argv[11])
+
     run = wandb.init(
-        project="avec experiments sac 5",
+        project="avec experiments sac 5 local",
         sync_tensorboard=True,
         config={
             "agent": mode,
@@ -111,6 +112,9 @@ if __name__ == "__main__":
         mode="offline",
     )
     for flag in range(1, 11):
+        if asked_flag != 0:
+            if flag != asked_flag:
+                continue
         num_threads = int(psutil.cpu_count() / psutil.cpu_count(logical=False))
         torch.set_num_threads(num_threads)
         set_random_seed(seed)
@@ -291,8 +295,8 @@ if __name__ == "__main__":
                 raise ValueError(f"Run {run.id} could not be found")
     run.finish()
     os.remove(os.path.join(folder, buffer_filename + ".pkl"))
-    os.system(f"source /home/yberthel/AVEC/venv/bin/activate && wandb sync {run_path}")
-    os.system(f". /home/yberthel/AVEC/venv/bin/activate && wandb sync {run_path}")
+    os.system(f"source /home/yberthel/AVEC/venv/bin/activate && wandb sync {run_path} && wandb artifact cache cleanup 1GB")
+    os.system(f". /home/yberthel/AVEC/venv/bin/activate && wandb sync {run_path} && wandb artifact cache cleanup 1GB")
     # os.system(f"wandb sync --clean --include-offline --clean-force {run_path}")
     # else:
     #     os.system(f"wandb sync --sync-tensorboard {run_path} --append --id {run.id}")
