@@ -21,6 +21,7 @@ from stable_baselines3.common.avec_utils import (
     evaluate_and_log_grads,
     evaluate_value_function,
     ranking_and_error_logging,
+    get_state,
 )
 
 
@@ -28,7 +29,7 @@ SelfOnPolicyAlgorithm = TypeVar("SelfOnPolicyAlgorithm", bound="OnPolicyAlgorith
 
 
 N_GRADIENT_ROLLOUTS = 10
-VALUE_FUNCTION_EVAL = True
+VALUE_FUNCTION_EVAL = False
 GRAD_EVAL = False
 TRUE_ALGO_NAME = "PPO"
 number_of_flags = 10
@@ -209,7 +210,7 @@ class OnPolicyAlgorithm(BaseAlgorithm):
                     clipped_actions = np.clip(actions, self.action_space.low, self.action_space.high)
 
             new_obs, rewards, dones, infos = env.step(clipped_actions)
-
+            self.states.append(get_state(env))
             self.num_timesteps += env.num_envs
 
             # Give access to local variables
@@ -449,6 +450,21 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         self.n_samples_MC = n_samples_MC
         self.grads_folder = grads_folder
         self.value_folder = value_folder
+        self.true_algo_name = TRUE_ALGO_NAME
+        self.previous_update_start = 0
+        self.samples = []
+
+        self.value_errors = []
+        self.normalized_value_errors = []
+        self.predicted_values = []
+        self.predicted_alternate_values = []
+        self.alternate_value_errors = []
+        self.alternate_normalized_value_errors = []
+        self.true_values = []
+        self.MC_values = []
+        self.previous_buffer_size = 0
+        self.alternate_critic = None
+
         if _init_setup_model:
             self._setup_model()
 
@@ -476,7 +492,9 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         self.policy = self.policy_class(  # type: ignore[assignment]
             self.observation_space, self.action_space, self.lr_schedule, use_sde=self.use_sde, **self.policy_kwargs
         )
+        self.alternate_policy = deepcopy(self.policy)
         self.policy = self.policy.to(self.device)
+        self.alternate_policy = self.alternate_policy.to(self.device)
 
     def collect_rollouts(
         self,
@@ -515,14 +533,6 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         if update:
             callback.on_rollout_start()
 
-        if flag and value_function_eval:
-            pbar = tqdm(total=self.n_samples_MC, desc="Collecting")
-        samples = np.random.choice(n_rollout_steps, self.n_samples_MC)
-        value_errors = []
-        normalized_value_errors = []
-        predicted_values = []
-        true_values = []
-        MC_values = []
         while n_steps < n_rollout_steps:
             if self.use_sde and self.sde_sample_freq > 0 and n_steps % self.sde_sample_freq == 0:
                 # Sample a new noise matrix
@@ -532,6 +542,7 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
                 # Convert to pytorch tensor or to TensorDict
                 obs_tensor = obs_as_tensor(self._last_obs, self.device)
                 actions, values, log_probs = self.policy(obs_tensor)
+                _, alternate_values, _ = self.alternate_policy(obs_tensor)
             actions = actions.cpu().numpy()
 
             # Rescale and perform action
@@ -550,24 +561,6 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
             new_obs, rewards, dones, infos = env.step(clipped_actions)
             if update:
                 self.num_timesteps += env.num_envs
-            if flag and (n_steps in samples) and value_function_eval:
-                pbar.update(1)
-                predicted_values, true_values, value_errors, normalized_value_errors = evaluate_value_function(
-                    self,
-                    env,
-                    n_flags,
-                    number_of_flags,
-                    alpha,
-                    n_steps,
-                    predicted_values,
-                    values,
-                    true_values,
-                    value_errors,
-                    MC_values,
-                    normalized_value_errors,
-                    TRUE_ALGO_NAME,  # FIXME : Adapt for alternate results
-                )
-
             # Give access to local variables
             if update:
                 callback.update_locals(locals())
@@ -601,6 +594,7 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
                 self._last_episode_starts,  # type: ignore[arg-type]
                 values,
                 log_probs,
+                alternate_value=alternate_values,
             )
             self._last_obs = new_obs  # type: ignore[assignment]
             self._last_episode_starts = dones
@@ -612,16 +606,6 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
             values = self.policy.predict_values(obs_as_tensor(new_obs, self.device))  # type: ignore[arg-type]
 
         rollout_buffer.compute_returns_and_advantage(last_values=values, dones=dones)
-
-        if flag and value_function_eval:
-            ranking_and_error_logging(
-                self,
-                predicted_values=predicted_values,
-                true_values=true_values,
-                deltas=rollout_buffer.deltas,
-                normalized_value_errors=normalized_value_errors,
-                value_errors=value_errors,
-            )
         if update:
             callback.update_locals(locals())
             callback.on_rollout_end()
@@ -686,25 +670,18 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         else:
             mode = None
 
-        load_artifacts(
-            number_of_flags,
-            self.env_name,
-            correction=self.correction,
-            alpha=self.alpha,
-            seed=self.seed,
-            true_algo_name=TRUE_ALGO_NAME,
-            mode=mode,
-            grads_folder=self.grads_folder,
-            value_folder=self.value_folder,
-        )
-
         TOTAL_UPDATES = total_timesteps // self.n_steps
 
         n_flags = 1
         while self.num_timesteps < total_timesteps:
             flag = (
-                (self.num_timesteps // (int((n_flags / number_of_flags) * total_timesteps)) > 0) and self.num_timesteps > 0
-            ) or (self._n_updates / self.n_epochs) == (TOTAL_UPDATES - 1)
+                ((self.num_timesteps + self.n_steps) // (int((n_flags / number_of_flags) * total_timesteps)) > 0)
+                and self.num_timesteps > 0
+            ) or (self.num_timesteps + self.n_steps >= total_timesteps)
+            if flag:
+                n_flags += 1
+                fraction_of_training_steps = int((n_flags - 1) * 100 / number_of_flags)
+                print(self.num_timesteps, n_flags, flag, fraction_of_training_steps)
             pairwise_similarities = []
             avec_pairwise_similarities = []
             self.old_grads = None
@@ -721,7 +698,7 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
                 n_iterations = 1
 
             if flag:
-                n_flags += 1
+
                 if GRAD_EVAL:
                     true_grads = compute_or_load_true_grads(
                         self,
@@ -776,7 +753,8 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
                 if update:
                     self.train(update=update)
                 if flag:
-                    self.logger.record("fraction of training steps", int((n_flags - 1) * 100 / number_of_flags))
+                    self.logger.record("fraction of training steps", fraction_of_training_steps)
+                    self.logger.dump(step=self.num_timesteps)
                     if GRAD_EVAL:
                         self.old_grads = deepcopy(grads)
                         self.old_avec_grads = deepcopy(avec_grads)

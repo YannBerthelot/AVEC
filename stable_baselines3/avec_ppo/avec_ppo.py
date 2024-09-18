@@ -156,6 +156,11 @@ class AVEC_PPO(AvecOnPolicyAlgorithm):
             value_folder=value_folder,
         )
 
+        self.alpha = alpha
+        self.correction = correction
+        self.env_name = env_name
+        self.states = []
+
         # Sanity check, otherwise it will lead to noisy gradient and NaN
         # because of the advantage normalization
         if normalize_advantage:
@@ -219,6 +224,7 @@ class AVEC_PPO(AvecOnPolicyAlgorithm):
 
         entropy_losses = []
         pg_losses, value_losses = [], []
+        alternage_pg_losses, alternate_value_losses = [], []
         clip_fractions = []
 
         continue_training = True
@@ -238,11 +244,17 @@ class AVEC_PPO(AvecOnPolicyAlgorithm):
 
                 values, log_prob, entropy = self.policy.evaluate_actions(rollout_data.observations, actions)
                 values = values.flatten()
+                alternate_values, _, _ = self.policy.evaluate_actions(rollout_data.observations, actions)
+                alternate_values = alternate_values.flatten()
                 # Normalize advantage
                 advantages = rollout_data.advantages
+                alternate_advantages = rollout_data.alternate_advantages
                 # Normalization does not make sense if mini batchsize == 1, see GH issue #325
                 if self.normalize_advantage and len(advantages) > 1:
                     advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+                    alternate_advantages = (alternate_advantages - alternate_advantages.mean()) / (
+                        alternate_advantages.std() + 1e-8
+                    )
 
                 # ratio between old and new policy, should be one at the first iteration
                 ratio = th.exp(log_prob - rollout_data.old_log_prob)
@@ -260,18 +272,33 @@ class AVEC_PPO(AvecOnPolicyAlgorithm):
                 if self.clip_range_vf is None:
                     # No clipping
                     values_pred = values
+                    alternate_values_pred = alternate_values
                 else:
                     # Clip the difference between old and new value
                     # NOTE: this depends on the reward scaling
                     values_pred = rollout_data.old_values + th.clamp(
                         values - rollout_data.old_values, -clip_range_vf, clip_range_vf
                     )
+                    alternate_values_pred = rollout_data.old_values + th.clamp(
+                        alternate_values - rollout_data.old_values, -clip_range_vf, clip_range_vf
+                    )
                 # Value loss using the TD(gae_lambda) target
-                residual_errors = rollout_data.returns - values_pred
-                var = th.var(residual_errors, unbiased=False)
-                bias = th.mean(residual_errors)
-                value_loss = (1 - alpha) * var + alpha * th.square(bias)
+                # residual_errors = rollout_data.returns - values_pred
+                # var = th.var(residual_errors, unbiased=False)
+                # bias = th.mean(residual_errors)
+                # value_loss = (1 - alpha) * var + alpha * th.square(bias)
+                value_loss = (1 - alpha) * th.var(values_pred, unbiased=False) + alpha * (
+                    th.mean(th.square(th.mean(values_pred) - rollout_data.returns))
+                    - 2 * th.cov(th.stack((values_pred.reshape(-1), rollout_data.returns.reshape(-1))))[0][1]
+                )
                 value_losses.append(value_loss.item())
+
+                alternate_value_loss = (1 - alpha) * th.var(values_pred, unbiased=False) + alpha * (
+                    th.mean(th.square(th.mean(alternate_values_pred) - rollout_data.alternate_returns))
+                    - 2
+                    * th.cov(th.stack((alternate_values_pred.reshape(-1), rollout_data.alternate_returns.reshape(-1))))[0][1]
+                )
+                alternate_value_losses.append(alternate_value_loss.item())
 
                 # Entropy loss favor exploration
                 if entropy is None:
@@ -283,7 +310,7 @@ class AVEC_PPO(AvecOnPolicyAlgorithm):
                 entropy_losses.append(entropy_loss.item())
 
                 loss = policy_loss + self.ent_coef * entropy_loss + self.vf_coef * value_loss
-
+                alternate_loss = policy_loss + self.ent_coef * entropy_loss + self.vf_coef * alternate_value_loss
                 # Calculate approximate form of reverse KL Divergence for early stopping
                 # see issue #417: https://github.com/DLR-RM/stable-baselines3/issues/417
                 # and discussion in PR #419: https://github.com/DLR-RM/stable-baselines3/pull/419
@@ -301,14 +328,23 @@ class AVEC_PPO(AvecOnPolicyAlgorithm):
 
                 # Optimization step
                 self.policy.optimizer.zero_grad()
+
                 loss.backward()
 
                 self.grads = get_grad_from_net(self.policy)
+                COMPARE_VALUE = True
+                if COMPARE_VALUE:
+                    self.alternate_policy.optimizer.zero_grad()
+                    alternate_loss.backward
+                    self.alternate_grads = get_grad_from_net(self.alternate_policy)
 
                 # Clip grad norm
                 if update:
                     th.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
                     self.policy.optimizer.step()
+                    if COMPARE_VALUE:
+                        th.nn.utils.clip_grad_norm_(self.alternate_policy.parameters(), self.max_grad_norm)
+                        self.alternate_policy.optimizer.step()
             if update:
                 self._n_updates += 1
             if not continue_training:
@@ -320,6 +356,7 @@ class AVEC_PPO(AvecOnPolicyAlgorithm):
         self.logger.record("train/entropy_loss", np.mean(entropy_losses))
         self.logger.record("train/policy_gradient_loss", np.mean(pg_losses))
         self.logger.record("train/value_loss", np.mean(value_losses))
+        self.logger.record("train/alternate_value_loss", np.mean(alternate_value_losses))
         self.logger.record("train/approx_kl", np.mean(approx_kl_divs))
         self.logger.record("train/clip_fraction", np.mean(clip_fractions))
         self.logger.record("train/loss", loss.item())

@@ -12,6 +12,7 @@ from stable_baselines3.common.type_aliases import (
     DictRolloutBufferSamples,
     ReplayBufferSamples,
     RolloutBufferSamples,
+    AvecRolloutBufferSamples,
 )
 from stable_baselines3.common.utils import get_device
 from stable_baselines3.common.vec_env import VecNormalize
@@ -577,21 +578,27 @@ class AvecRolloutBuffer(BaseBuffer):
         self.actions = np.zeros((self.buffer_size, self.n_envs, self.action_dim), dtype=np.float32)
         self.rewards = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
         self.returns = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
+        self.alternate_returns = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
         self.episode_starts = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
         self.values = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
+        self.alternate_values = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
         self.log_probs = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
         self.advantages = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
+        self.alternate_advantages = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
         self.deltas = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
+        self.alternate_deltas = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
         self.generator_ready = False
         super().reset()
 
-    def unbiase_values(self, value):
-        return value + self.correction_term
+    def unbiase_values(self, value, correction_term):
+        return value + correction_term
 
     def compute_correction_term(self, old_returns, current_values):
         return (1 - 2 * self.alpha) / (1 - self.alpha) * np.mean(old_returns - current_values)
 
-    def compute_returns_and_advantage(self, last_values: th.Tensor, dones: np.ndarray) -> None:
+    def compute_returns_and_advantage(
+        self, last_values: th.Tensor, dones: np.ndarray, alternate_last_values: th.Tensor = None
+    ) -> None:
         """
         Post-processing step: compute the lambda-return (TD(lambda) estimate)
         and GAE(lambda) advantage.
@@ -612,6 +619,7 @@ class AvecRolloutBuffer(BaseBuffer):
         """
         # Convert to numpy
         last_values = last_values.clone().cpu().numpy().flatten()  # type: ignore[assignment]
+
         last_gae_lam = 0
         if self.correction:
             correction_term = self.compute_correction_term(current_values=self.values, old_returns=self.returns)
@@ -632,6 +640,34 @@ class AvecRolloutBuffer(BaseBuffer):
         # TD(lambda) estimator, see Github PR #375 or "Telescoping in TD(lambda)"
         # in David Silver Lecture 4: https://www.youtube.com/watch?v=PnHCvfgC_ZA
         self.returns = self.advantages + unbiased_values
+        if alternate_last_values is not None:
+            alternate_last_values = last_values.clone().cpu().numpy().flatten()  # type: ignore[assignment]
+            alternate_last_gae_lam = 0
+            if self.correction:
+                correction_term = self.compute_correction_term(
+                    current_values=self.alternate_values, old_returns=self.alternate_returns
+                )
+            else:
+                correction_term = 0
+            alternate_unbiased_values = self.unbiase_values(self.alternate_values, correction_term)
+            for step in reversed(range(self.buffer_size)):
+                if step == self.buffer_size - 1:
+                    alternate_next_non_terminal = 1.0 - dones.astype(np.float32)
+                    alternate_next_values = self.unbiase_values(alternate_last_values, correction_term)
+                else:
+                    alternate_next_non_terminal = 1.0 - self.episode_starts[step + 1]
+                    alternate_next_values = alternate_unbiased_values[step + 1]
+                alternate_delta = (
+                    self.rewards[step]
+                    + self.gamma * alternate_next_values * alternate_next_non_terminal
+                    - alternate_unbiased_values[step]
+                )
+                alternate_last_gae_lam = delta + self.gamma * self.gae_lambda * alternate_next_non_terminal * last_gae_lam
+                self.alternate_advantages[step] = alternate_last_gae_lam
+                self.alternate_deltas[step] = alternate_delta
+            # TD(lambda) estimator, see Github PR #375 or "Telescoping in TD(lambda)"
+            # in David Silver Lecture 4: https://www.youtube.com/watch?v=PnHCvfgC_ZA
+            self.alternate_returns = self.alternate_advantages + alternate_unbiased_values
 
     def add(
         self,
@@ -641,6 +677,7 @@ class AvecRolloutBuffer(BaseBuffer):
         episode_start: np.ndarray,
         value: th.Tensor,
         log_prob: th.Tensor,
+        alternate_value: th.Tensor = None,
     ) -> None:
         """
         :param obs: Observation
@@ -669,6 +706,8 @@ class AvecRolloutBuffer(BaseBuffer):
         self.rewards[self.pos] = np.array(reward)
         self.episode_starts[self.pos] = np.array(episode_start)
         self.values[self.pos] = value.clone().cpu().numpy().flatten()
+        if alternate_value is not None:
+            self.alternate_values[self.pos] = alternate_value.clone().cpu().numpy().flatten()
         self.log_probs[self.pos] = log_prob.clone().cpu().numpy()
         self.pos += 1
         if self.pos == self.buffer_size:
@@ -683,6 +722,7 @@ class AvecRolloutBuffer(BaseBuffer):
                 "observations",
                 "actions",
                 "values",
+                "alternate_values",
                 "log_probs",
                 "advantages",
                 "returns",
@@ -710,11 +750,14 @@ class AvecRolloutBuffer(BaseBuffer):
             self.observations[batch_inds],
             self.actions[batch_inds],
             self.values[batch_inds].flatten(),
+            self.alternate_values[batch_inds].flatten(),
             self.log_probs[batch_inds].flatten(),
             self.advantages[batch_inds].flatten(),
+            self.alternate_advantages[batch_inds].flatten(),
             self.returns[batch_inds].flatten(),
+            self.alternate_returns[batch_inds].flatten(),
         )
-        return RolloutBufferSamples(*tuple(map(self.to_torch, data)))
+        return AvecRolloutBufferSamples(*tuple(map(self.to_torch, data)))
 
 
 class DictReplayBuffer(ReplayBuffer):

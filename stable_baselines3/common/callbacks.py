@@ -765,8 +765,8 @@ class WandbCheckpointCallback(BaseCallback):
         self.name_prefix = name_prefix
         self.save_replay_buffer = save_replay_buffer
         self.save_vecnormalize = save_vecnormalize
-        self.number_of_files_needed = ceil(n_steps / buffer_size)
-        self.flag_vals = n_steps / self.number_of_files_needed
+        self.number_of_files_needed = ceil(n_steps / buffer_size) if buffer_size is not None else None
+        self.flag_vals = n_steps / self.number_of_files_needed if buffer_size is not None else None
         env = self.name_prefix.split("_")[0]
         if "AVEC" in self.name_prefix:
             agent = "_".join(self.name_prefix.split("_")[1:3])

@@ -120,9 +120,8 @@ if __name__ == "__main__":
             )
 
     run = wandb.init(
-        project="check consistency",
+        project="AVEC PPO exps local",
         sync_tensorboard=True,
-        mode="online",
         config={
             "agent": mode,
             "mode": mode,
@@ -133,6 +132,7 @@ if __name__ == "__main__":
             "alpha": alpha,
             "type_of_job": "train",
         },
+        mode="offline",
     )
     os.system("wandb artifact cache cleanup 1GB")
     env = make_vec_env(env_name, n_envs=n_envs)
@@ -165,6 +165,7 @@ if __name__ == "__main__":
         elif mode == "CORRECTED_AVEC_SAC":
             hyperparams["correction"] = True
             agent = AVEC_SAC
+
     # hyperparams["learning_starts"] = 0
     model = agent(
         policy,
@@ -174,7 +175,6 @@ if __name__ == "__main__":
         seed=seed,
     )
     true_n_timesteps = n_timesteps if n_timesteps is not None else n_timesteps_user
-    # true_n_timesteps = int(1e4)
     # Save a checkpoint every 1000 steps
     n_steps = model.n_steps if "PPO" in mode else model.train_freq.frequency
     n_flags = 10
@@ -183,10 +183,24 @@ if __name__ == "__main__":
         save_freq=max(save_freq // n_envs, 1),
         save_path="./models/",
         name_prefix=f"{env_name}_{mode}_{alpha}_{seed}",
-        save_replay_buffer=True,
+        save_replay_buffer=True if "SAC" in mode else None,
         save_vecnormalize=True,
         n_steps=true_n_timesteps,
-        buffer_size=model.replay_buffer.buffer_size,
+        buffer_size=model.replay_buffer.buffer_size if "SAC" in mode else None,
     )
-    model.learn(total_timesteps=true_n_timesteps, callback=[checkpoint_callback, WandbCallback()], log_interval=200)
+    model.learn(
+        total_timesteps=true_n_timesteps,
+        callback=[checkpoint_callback, WandbCallback()],
+        log_interval=1 if "PPO" in mode else 200,
+    )
+    run_path = "/" + os.path.join(*run.dir.split("/")[:-1])
+    if not (os.path.exists(run_path)):
+        wandb_folder = "/" + os.path.join(*run.dir.split("/")[:-2])
+        if f"run-{run.id}.wandb" in os.listdir(os.path.join(wandb_folder, "latest-run")):
+            run_path = os.path.join(wandb_folder, "latest-run")
+        else:
+            raise ValueError(f"Run {run.id} could not be found")
     run.finish()
+    os.system(f"source /home/yberthel/AVEC/venv/bin/activate && wandb sync {run_path} && wandb artifact cache cleanup 1GB")
+    os.system(f". /home/yberthel/AVEC/venv/bin/activate && wandb sync {run_path} && wandb artifact cache cleanup 1GB")
+    os.system(f"wandb sync {run_path} && wandb artifact cache cleanup 1GB")

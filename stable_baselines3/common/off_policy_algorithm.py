@@ -567,7 +567,6 @@ class OffPolicyAlgorithm(BaseAlgorithm):
         callback.on_rollout_start()
         continue_training = True
         while should_collect_more_steps(train_freq, num_collected_steps, num_collected_episodes):
-            print(num_collected_steps)
             if self.use_sde and self.sde_sample_freq > 0 and num_collected_steps % self.sde_sample_freq == 0:
                 # Sample a new noise matrix
                 self.actor.reset_noise(env.num_envs)
@@ -1277,7 +1276,6 @@ class AvecOffPolicyAlgorithm(BaseAlgorithm):
             train_freq = TrainFreq(n_rollout_steps, unit=TrainFrequencyUnit.STEP)
             assert n_rollout_steps <= replay_buffer.buffer_size
         while should_collect_more_steps(train_freq, num_collected_steps, num_collected_episodes):
-            print(num_collected_steps)
             if self.use_sde and self.sde_sample_freq > 0 and num_collected_steps % self.sde_sample_freq == 0:
                 # Sample a new noise matrix
                 self.actor.reset_noise(env.num_envs)
