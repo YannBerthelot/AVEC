@@ -80,7 +80,14 @@ if __name__ == "__main__":
     torch.set_num_threads(num_threads)
     set_random_seed(seed)
     dir_path = os.path.dirname(os.path.realpath(__file__))
-    hyperparams_data = read_hyperparams_data(os.path.join(dir_path, "ppo.yml" if "PPO" in mode else "sac.yml"))
+    match mode:
+        case "AVEC_PPO" | "CORRECTED_AVEC_PPO":
+            file = "ppo.yml"
+        case "NAKED_PPO" | "CORRECTED_NAKED_PPO":
+            file = "naked_ppo.yml"
+        case "AVEC_SAC" | "CORRECTED_AVEC_SAC":
+            file = "sac.yml"
+    hyperparams_data = read_hyperparams_data(os.path.join(dir_path, file))
     n_envs, policy, hyperparams, normalize, n_timesteps = parse_hyperparams(
         env_name, hyperparams_data
     )  # TODO : change batch_size with batch_factor
@@ -118,9 +125,9 @@ if __name__ == "__main__":
                 net_arch=dict(pi=[256, 256], qf=[int(256 * network_size_factor), int(256 * network_size_factor)]),
                 activation_fn=nn.ReLU,
             )
-
+    agent_name = "PPO" if "PPO" in mode else "SAC"
     run = wandb.init(
-        project="AVEC PPO exps local",
+        project=f"avec experiments {agent_name} 5",
         sync_tensorboard=True,
         config={
             "agent": mode,
@@ -140,17 +147,18 @@ if __name__ == "__main__":
         env = VecNormalize(env, gamma=hyperparams["gamma"] if "gamma" in hyperparams.keys() else 0.99)
     if mode == "PPO":
         agent = PPO
-    elif (mode == "AVEC_PPO") or (mode == "CORRECTED_AVEC_PPO"):
+    elif (mode == "AVEC_PPO") or (mode == "CORRECTED_AVEC_PPO") or (mode == "NAKED_PPO"):
         hyperparams["env_name"] = env_name
         hyperparams["alpha"] = alpha
         hyperparams["n_eval_timesteps"] = N_EVAL_TIMESTEPS
         hyperparams["n_samples_MC"] = N_SAMPLES_MC
         hyperparams["n_eval_envs"] = N_EVAL_ENVS
-        if mode == "AVEC_PPO":
+        if (mode == "AVEC_PPO") or (mode == "NAKED_PPO"):
             agent = AVEC_PPO
-        elif mode == "CORRECTED_AVEC_PPO":
+        elif (mode == "CORRECTED_AVEC_PPO") or (mode == "CORRECTED_NAKED_PPO"):
             hyperparams["correction"] = True
             agent = AVEC_PPO
+
     elif "SAC" in mode:  # or (mode == "CORRECTED_AVEC_PPO"):
         hyperparams["env_name"] = env_name
         hyperparams["alpha"] = alpha
@@ -165,8 +173,8 @@ if __name__ == "__main__":
         elif mode == "CORRECTED_AVEC_SAC":
             hyperparams["correction"] = True
             agent = AVEC_SAC
-
-    # hyperparams["learning_starts"] = 0
+    # if "SAC" in mode:
+    #     hyperparams["learning_starts"] = 0
     model = agent(
         policy,
         env,
@@ -175,6 +183,7 @@ if __name__ == "__main__":
         seed=seed,
     )
     true_n_timesteps = n_timesteps if n_timesteps is not None else n_timesteps_user
+    true_n_timesteps = n_timesteps_user
     # Save a checkpoint every 1000 steps
     n_steps = model.n_steps if "PPO" in mode else model.train_freq.frequency
     n_flags = 10

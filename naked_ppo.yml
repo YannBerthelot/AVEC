@@ -1,0 +1,25 @@
+
+# === Mujoco Envs ===
+# HalfCheetah-v4: &mujoco-defaults
+#   normalize: true
+#   n_timesteps: !!float 1e6
+#   policy: 'MlpPolicy'
+
+Ant-v4: &mujoco-defaults
+  normalize: true
+  n_timesteps: !!float 1e6
+  policy: 'MlpPolicy'
+
+Hopper-v4:
+  <<: *mujoco-defaults
+
+Walker2d-v4:
+  <<: *mujoco-defaults
+
+HalfCheetah-v4:
+  <<: *mujoco-defaults
+
+Humanoid-v4:
+  <<: *mujoco-defaults
+  n_timesteps: !!float 2e6
+
