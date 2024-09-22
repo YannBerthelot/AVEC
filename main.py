@@ -80,13 +80,12 @@ if __name__ == "__main__":
     torch.set_num_threads(num_threads)
     set_random_seed(seed)
     dir_path = os.path.dirname(os.path.realpath(__file__))
-    match mode:
-        case "AVEC_PPO" | "CORRECTED_AVEC_PPO":
-            file = "ppo.yml"
-        case "NAKED_PPO" | "CORRECTED_NAKED_PPO":
-            file = "naked_ppo.yml"
-        case "AVEC_SAC" | "CORRECTED_AVEC_SAC":
-            file = "sac.yml"
+    if mode in ("AVEC_PPO", "CORRECTED_AVEC_PPO"):
+        file = "ppo.yml"
+    elif mode in ("NAKED_PPO", "CORRECTED_NAKED_PPO"):
+        file = "naked_ppo.yml"
+    elif mode in ("AVEC_SAC", "CORRECTED_AVEC_SAC"):
+        file = "sac.yml"
     hyperparams_data = read_hyperparams_data(os.path.join(dir_path, file))
     n_envs, policy, hyperparams, normalize, n_timesteps = parse_hyperparams(
         env_name, hyperparams_data
@@ -183,7 +182,7 @@ if __name__ == "__main__":
         seed=seed,
     )
     true_n_timesteps = n_timesteps if n_timesteps is not None else n_timesteps_user
-    true_n_timesteps = n_timesteps_user
+    # true_n_timesteps = n_timesteps_user
     # Save a checkpoint every 1000 steps
     n_steps = model.n_steps if "PPO" in mode else model.train_freq.frequency
     n_flags = 10
