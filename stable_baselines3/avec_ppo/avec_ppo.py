@@ -283,21 +283,22 @@ class AVEC_PPO(AvecOnPolicyAlgorithm):
                         alternate_values - rollout_data.old_values, -clip_range_vf, clip_range_vf
                     )
                 # Value loss using the TD(gae_lambda) target
-                # residual_errors = rollout_data.returns - values_pred
-                # var = th.var(residual_errors, unbiased=False)
-                # bias = th.mean(residual_errors)
-                # value_loss = (1 - alpha) * var + alpha * th.square(bias)
-                value_loss = (1 - alpha) * th.var(values_pred, unbiased=False) + alpha * (
-                    th.mean(th.square(th.mean(values_pred) - rollout_data.returns))
-                    - 2 * th.cov(th.stack((values_pred.reshape(-1), rollout_data.returns.reshape(-1))))[0][1]
-                )
+                residual_errors = rollout_data.returns - values_pred
+                var = th.var(residual_errors, unbiased=False)
+                bias = th.mean(residual_errors)
+                value_loss = (1 - alpha) * var + alpha * th.square(bias)
+                # value_loss = (1 - alpha) * th.var(values_pred, unbiased=False) + alpha * (
+                #     th.mean(th.square(th.mean(values_pred) - rollout_data.returns))
+                #     - 2 * th.cov(th.stack((values_pred.reshape(-1), rollout_data.returns.reshape(-1))))[0][1]
+                # )
                 value_losses.append(value_loss.item())
 
-                alternate_value_loss = (1 - alpha) * th.var(values_pred, unbiased=False) + alpha * (
-                    th.mean(th.square(th.mean(alternate_values_pred) - rollout_data.alternate_returns))
-                    - 2
-                    * th.cov(th.stack((alternate_values_pred.reshape(-1), rollout_data.alternate_returns.reshape(-1))))[0][1]
-                )
+                # alternate_value_loss = (1 - alpha) * th.var(alternate_values_pred, unbiased=False) + alpha * (
+                #     th.mean(th.square(th.mean(alternate_values_pred) - rollout_data.alternate_returns))
+                #     - 2
+                #     * th.cov(th.stack((alternate_values_pred.reshape(-1), rollout_data.alternate_returns.reshape(-1))))[0][1]
+                # )
+                alternate_value_loss = 0.5 * F.mse_loss(alternate_values_pred, rollout_data.returns)
                 alternate_value_losses.append(alternate_value_loss.item())
 
                 # Entropy loss favor exploration
