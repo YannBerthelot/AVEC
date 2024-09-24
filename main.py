@@ -199,7 +199,7 @@ if __name__ == "__main__":
     )
     model.learn(
         total_timesteps=true_n_timesteps,
-        callback=[checkpoint_callback, WandbCallback()] if seed < 10 else WandbCallback(),
+        callback=[checkpoint_callback, WandbCallback()] if seed < 10 and not "CORRECTED" in mode else WandbCallback(),
         log_interval=1 if "PPO" in mode else 200,
     )
     run_path = "/" + os.path.join(*run.dir.split("/")[:-1])
