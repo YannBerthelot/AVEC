@@ -125,7 +125,7 @@ if __name__ == "__main__":
                 activation_fn=nn.ReLU,
             )
     agent_name = "PPO" if "PPO" in mode else "SAC"
-    # number = 6 if "PPO" in mode else 5
+    number = 7 if "PPO" in mode else 6
     run = wandb.init(
         project=f"avec experiments {agent_name} 6",
         sync_tensorboard=True,
