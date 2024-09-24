@@ -109,7 +109,7 @@ if __name__ == "__main__":
             "alpha": alpha,
             "type_of_job": "evaluate",
         },
-        mode="online",
+        mode="offline",
     )
     for flag in range(1, 11):
         if asked_flag != 0:
@@ -224,11 +224,11 @@ if __name__ == "__main__":
         os.remove(os.path.join(folder, states_filename + ".pkl"))
         if "SAC" in mode:
             buffer_size = model.buffer_size
-        old_alt_params = deepcopy(model.get_parameters()["policy"]["alternate_critic.qf0.0.weight"])
+        # old_alt_params = deepcopy(model.get_parameters()["policy"]["alternate_critic.qf0.0.weight"])
         model = model.load(os.path.join(folder, filename))
-        assert not torch.equal(
-            old_alt_params, model.get_parameters()["policy"]["alternate_critic.qf0.0.weight"]
-        ), "alt critic didn't change after loading"
+        # assert not torch.equal(
+        #     old_alt_params, model.get_parameters()["policy"]["alternate_critic.qf0.0.weight"]
+        # ), "alt critic didn't change after loading"
         model.set_env(env)
         # model._setup_learn(
         #     0,
@@ -288,8 +288,14 @@ if __name__ == "__main__":
                 timesteps=flag * save_freq,
             )
         else:
-            # TODO : PPO
-            pass
+            model.collect_rollouts_for_eval(
+                env,
+                rollout_buffer=model.rollout_buffer,
+                n_rollout_steps=model.n_steps,
+                alpha=model.alpha,
+                n_flags=flag,
+                timesteps=flag * save_freq,
+            )
 
         run_path = "/" + os.path.join(*run.dir.split("/")[:-1])
         if not (os.path.exists(run_path)):

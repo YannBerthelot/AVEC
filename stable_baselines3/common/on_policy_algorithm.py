@@ -23,7 +23,7 @@ from stable_baselines3.common.avec_utils import (
     ranking_and_error_logging,
     get_state,
 )
-
+from numpy.random import default_rng
 
 SelfOnPolicyAlgorithm = TypeVar("SelfOnPolicyAlgorithm", bound="OnPolicyAlgorithm")
 
@@ -453,6 +453,7 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         self.true_algo_name = TRUE_ALGO_NAME
         self.previous_update_start = 0
         self.samples = []
+        self.states = []
 
         self.value_errors = []
         self.normalized_value_errors = []
@@ -502,12 +503,8 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         callback: BaseCallback,
         rollout_buffer: AvecRolloutBuffer,
         n_rollout_steps: int,
-        flag: bool,
-        alpha: float = None,
-        n_flags: int = None,
-        number_of_flags: int = None,
         update: bool = True,
-        value_function_eval: bool = False,
+        collect_states: bool = False,
     ) -> bool:
         """
         Collect experiences using the current policy and fill a ``RolloutBuffer``.
@@ -559,6 +556,8 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
                     clipped_actions = np.clip(actions, self.action_space.low, self.action_space.high)
 
             new_obs, rewards, dones, infos = env.step(clipped_actions)
+            if collect_states:
+                self.states.append(get_state(env))
             if update:
                 self.num_timesteps += env.num_envs
             # Give access to local variables
@@ -605,11 +604,97 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
             # Compute value for the last timestep
             values = self.policy.predict_values(obs_as_tensor(new_obs, self.device))  # type: ignore[arg-type]
 
-        rollout_buffer.compute_returns_and_advantage(last_values=values, dones=dones)
+        rollout_buffer.compute_returns_and_advantage(last_values=values, dones=dones, alternate_last_values=alternate_values)
         if update:
             callback.update_locals(locals())
             callback.on_rollout_end()
         return True
+
+    def collect_rollouts_for_eval(
+        self,
+        env: VecEnv,
+        rollout_buffer: AvecRolloutBuffer,
+        n_rollout_steps: int,
+        alpha: float = None,
+        n_flags: int = None,
+        timesteps=None,
+    ) -> bool:
+        """
+        Collect experiences using the current policy and fill a ``RolloutBuffer``.
+        The term rollout here refers to the model-free notion and should not
+        be used with the concept of rollout used in model-based RL or planning.
+
+        :param env: The training environment
+        :param callback: Callback that will be called at each step
+            (and at the beginning and end of the rollout)
+        :param rollout_buffer: Buffer to fill with rollouts
+        :param n_rollout_steps: Number of experiences to collect per environment
+        :return: True if function returned with at least `n_rollout_steps`
+            collected, False if callback terminated rollout prematurely.
+        """
+        # Switch to eval mode (this affects batch norm / dropout)
+        self._last_obs = env.reset()  # type: ignore[assignment]
+        self._last_episode_starts = np.ones((self.env.num_envs,), dtype=bool)
+
+        self.policy.set_training_mode(False)
+
+        self.collect_rollouts(env, None, rollout_buffer, n_rollout_steps, update=False, collect_states=True)
+        rng = default_rng(self.seed)
+        self.samples = rng.choice(
+            len(self.states) - 1, self.n_samples_MC
+        )  # TODO : find how to handle with update at each step
+        deltas = []
+        alternate_deltas = []
+        MC_episode_lengths = []
+        nb_full_episodes = []
+
+        for i in self.samples:
+            state = self.states[i]
+            MC_values, MC_episode_length, nb_full_episode = evaluate_value_function(
+                self,
+                state,
+                n_flags,
+                number_of_flags,
+                alpha,
+                self.num_timesteps + i,
+                TRUE_ALGO_NAME,
+            )
+            MC_episode_lengths.append(MC_episode_length)
+            nb_full_episodes.append(nb_full_episode)
+
+            true_value = MC_values.mean(axis=0)
+            value_error = (true_value - rollout_buffer.values[i]) ** 2
+            normalized_value_error = value_error / (true_value**2)
+            deltas.append(rollout_buffer.deltas[i])
+            self.predicted_values.append(rollout_buffer.values[i])
+            self.true_values.append(true_value)
+            self.MC_values.append(MC_values)
+            self.value_errors.append(value_error)
+            self.normalized_value_errors.append(normalized_value_error)
+
+            alternate_value_error = (true_value - rollout_buffer.alternate_values[i]) ** 2
+            alternate_normalized_value_error = alternate_value_error / (true_value**2)
+            alternate_deltas.append(rollout_buffer.alternate_advantages[i])
+            self.predicted_alternate_values.append(rollout_buffer.alternate_values[i])
+            self.alternate_value_errors.append(alternate_value_error)
+            self.alternate_normalized_value_errors.append(alternate_normalized_value_error)
+
+        ranking_and_error_logging(
+            self,
+            predicted_values=self.predicted_values,
+            true_values=self.true_values,
+            deltas=deltas,
+            normalized_value_errors=self.normalized_value_errors,
+            value_errors=self.value_errors,
+            timesteps=timesteps,
+            MC_episode_lengths=MC_episode_lengths,
+            nb_full_episodes=nb_full_episodes,
+            alternate_deltas=alternate_deltas,
+            alternate_normalized_value_errors=self.alternate_normalized_value_errors,
+            alternate_value_errors=self.alternate_value_errors,
+            alternate_values=self.predicted_alternate_values,
+            MC_values=self.MC_values,
+        )
 
     def train(self) -> None:
         """
