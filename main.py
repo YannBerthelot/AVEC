@@ -125,8 +125,9 @@ if __name__ == "__main__":
                 activation_fn=nn.ReLU,
             )
     agent_name = "PPO" if "PPO" in mode else "SAC"
+    # number = 6 if "PPO" in mode else 5
     run = wandb.init(
-        project=f"avec experiments {agent_name} 5",
+        project=f"avec experiments {agent_name} 6",
         sync_tensorboard=True,
         config={
             "agent": mode,
@@ -138,7 +139,7 @@ if __name__ == "__main__":
             "alpha": alpha,
             "type_of_job": "train",
         },
-        mode="offline",
+        mode="online",
     )
     os.system("wandb artifact cache cleanup 1GB")
     env = make_vec_env(env_name, n_envs=n_envs)
@@ -146,7 +147,7 @@ if __name__ == "__main__":
         env = VecNormalize(env, gamma=hyperparams["gamma"] if "gamma" in hyperparams.keys() else 0.99)
     if mode == "PPO":
         agent = PPO
-    elif (mode == "AVEC_PPO") or (mode == "CORRECTED_AVEC_PPO") or (mode == "NAKED_PPO"):
+    elif (mode == "AVEC_PPO") or (mode == "CORRECTED_AVEC_PPO") or (mode == "NAKED_PPO") or (mode == "CORRECTED_NAKED_PPO"):
         hyperparams["env_name"] = env_name
         hyperparams["alpha"] = alpha
         hyperparams["n_eval_timesteps"] = N_EVAL_TIMESTEPS
@@ -198,7 +199,7 @@ if __name__ == "__main__":
     )
     model.learn(
         total_timesteps=true_n_timesteps,
-        callback=[checkpoint_callback, WandbCallback()],
+        callback=[checkpoint_callback, WandbCallback()] if seed < 10 else WandbCallback(),
         log_interval=1 if "PPO" in mode else 200,
     )
     run_path = "/" + os.path.join(*run.dir.split("/")[:-1])

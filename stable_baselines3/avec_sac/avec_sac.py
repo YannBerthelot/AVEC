@@ -315,23 +315,12 @@ class AVEC_SAC(AvecOffPolicyAlgorithm):
                 alternate_target_q_values = (
                     replay_data.rewards + (1 - replay_data.dones) * self.gamma * alternate_next_q_values
                 )
-            if self.AVEC:
-                critic_loss = sum(
-                    (1 - alpha) * th.var(current_q - target_q_values, unbiased=False)
-                    + alpha * th.square(th.mean(current_q - target_q_values))
-                    for current_q in current_q_values
-                )
 
-            else:  # classic SAC loss
-                critic_loss = sum(
-                    (1 - alpha) * th.var(current_q, unbiased=False)
-                    + alpha
-                    * (
-                        th.mean(th.square(th.mean(current_q) - target_q_values))
-                        - 2 * th.cov(th.stack((current_q.reshape(-1), target_q_values.reshape(-1))))[0][1]
-                    )
-                    for current_q in current_q_values
-                )
+            critic_loss = sum(
+                (1 - alpha) * th.var(current_q - target_q_values, unbiased=False)
+                + alpha * th.square(th.mean(current_q - target_q_values))
+                for current_q in current_q_values
+            )
 
             if COMPARE_VALUE:
                 # alternate_critic_loss = 0.5 * sum(

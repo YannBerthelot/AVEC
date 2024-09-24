@@ -112,6 +112,7 @@ class BaseBuffer(ABC):
         """
         upper_bound = self.buffer_size if self.full else self.pos
         batch_inds = np.random.randint(0, upper_bound, size=batch_size)
+
         return self._get_samples(batch_inds, env=env)
 
     @abstractmethod

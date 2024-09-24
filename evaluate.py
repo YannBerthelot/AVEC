@@ -109,7 +109,7 @@ if __name__ == "__main__":
             "alpha": alpha,
             "type_of_job": "evaluate",
         },
-        mode="offline",
+        mode="online",
     )
     for flag in range(1, 11):
         if asked_flag != 0:
@@ -222,7 +222,8 @@ if __name__ == "__main__":
         assert os.path.exists(os.path.join(folder, states_filename + ".pkl")), f"download failed for {states_filename}"
         states = read_from_pickle(os.path.join(folder, states_filename))
         os.remove(os.path.join(folder, states_filename + ".pkl"))
-        buffer_size = model.buffer_size
+        if "SAC" in mode:
+            buffer_size = model.buffer_size
         old_alt_params = deepcopy(model.get_parameters()["policy"]["alternate_critic.qf0.0.weight"])
         model = model.load(os.path.join(folder, filename))
         assert not torch.equal(
@@ -238,37 +239,37 @@ if __name__ == "__main__":
 
         # )
         model._logger = utils.configure_logger(0, model.tensorboard_log, "run", False)
+        if "SAC" in mode:
+            number_of_files_needed = ceil(n_steps / model.replay_buffer.buffer_size)
+            buffer_files = []
+            for flag_idx in range(1, number_of_files_needed + 1):
+                flag_val = (1 / number_of_files_needed) * number_of_flags
+                closest_flag_val = find_nearest(list(range(1, number_of_flags + 1)), flag_val)
+                buffer_filename = f"replay_buffer_{env_name}_{mode}_{alpha}_{seed}_{closest_flag_val*save_freq}"
+                # artifact = wandb.use_artifact(f"{buffer_filename}:latest")
+                # datadir = artifact.download()
+                if not os.path.exists(os.path.join(folder, buffer_filename + ".pkl")):
+                    copy_from_host(
+                        os.path.join(folder, buffer_filename + ".pkl"),
+                        "flanders.gw",
+                        os.path.join(target_folder, "replay_buffers", buffer_filename + ".pkl"),
+                    )
+                assert os.path.exists(os.path.join(folder, buffer_filename + ".pkl")), f"download failed for {buffer_filename}"
+                buffer_files.append(buffer_filename)
 
-        number_of_files_needed = ceil(n_steps / model.replay_buffer.buffer_size)
-        buffer_files = []
-        for flag_idx in range(1, number_of_files_needed + 1):
-            flag_val = (1 / number_of_files_needed) * number_of_flags
-            closest_flag_val = find_nearest(list(range(1, number_of_flags + 1)), flag_val)
-            buffer_filename = f"replay_buffer_{env_name}_{mode}_{alpha}_{seed}_{closest_flag_val*save_freq}"
-            # artifact = wandb.use_artifact(f"{buffer_filename}:latest")
-            # datadir = artifact.download()
-            if not os.path.exists(os.path.join(folder, buffer_filename + ".pkl")):
-                copy_from_host(
-                    os.path.join(folder, buffer_filename + ".pkl"),
-                    "flanders.gw",
-                    os.path.join(target_folder, "replay_buffers", buffer_filename + ".pkl"),
-                )
-            assert os.path.exists(os.path.join(folder, buffer_filename + ".pkl")), f"download failed for {buffer_filename}"
-            buffer_files.append(buffer_filename)
-
-        number_of_files_needed = ceil(flag * save_freq / model.replay_buffer.buffer_size)
-        for i in range(number_of_files_needed):
-            buffer_filename = buffer_files[i]
-            temp_model = agent.load(os.path.join(folder, filename))
-            temp_model.load_replay_buffer(os.path.join(folder, buffer_filename))
-            # os.remove(os.path.join(folder, buffer_filename + ".pkl"))
-            lower_idx = max(0, flag * save_freq - buffer_size * (i + 1))
-            uppder_idx = min(flag * save_freq, buffer_size * (i + 1))
-            for values in ["next_observations", "actions", "observations", "rewards", "dones", "timeouts"]:
-                model.replay_buffer.__dict__[values][lower_idx:uppder_idx] = temp_model.replay_buffer.__dict__[values][
-                    lower_idx:uppder_idx
-                ]
-            del temp_model
+            number_of_files_needed = ceil(flag * save_freq / model.replay_buffer.buffer_size)
+            for i in range(number_of_files_needed):
+                buffer_filename = buffer_files[i]
+                temp_model = agent.load(os.path.join(folder, filename))
+                temp_model.load_replay_buffer(os.path.join(folder, buffer_filename))
+                # os.remove(os.path.join(folder, buffer_filename + ".pkl"))
+                lower_idx = max(0, flag * save_freq - buffer_size * (i + 1))
+                uppder_idx = min(flag * save_freq, buffer_size * (i + 1))
+                for values in ["next_observations", "actions", "observations", "rewards", "dones", "timeouts"]:
+                    model.replay_buffer.__dict__[values][lower_idx:uppder_idx] = temp_model.replay_buffer.__dict__[values][
+                        lower_idx:uppder_idx
+                    ]
+                del temp_model
 
         os.remove(os.path.join(folder, filename + ".zip"))
         if len(os.listdir(folder)) == 0:
@@ -277,14 +278,18 @@ if __name__ == "__main__":
             model.__dict__[param] = value
         model.__dict__["n_eval_rollout_steps"] = N_EVAL_TIMESTEPS
         model.__dict__["n_eval_rollout_envs"] = N_EVAL_ENVS
-        model.collect_rollouts_for_eval(
-            states,
-            model.replay_buffer,
-            n_flags=flag,
-            number_of_flags=number_of_flags,
-            alpha=model.alpha,
-            timesteps=flag * save_freq,
-        )
+        if "SAC" in mode:
+            model.collect_rollouts_for_eval(
+                states,
+                model.replay_buffer,
+                n_flags=flag,
+                number_of_flags=number_of_flags,
+                alpha=model.alpha,
+                timesteps=flag * save_freq,
+            )
+        else:
+            # TODO : PPO
+            pass
 
         run_path = "/" + os.path.join(*run.dir.split("/")[:-1])
         if not (os.path.exists(run_path)):

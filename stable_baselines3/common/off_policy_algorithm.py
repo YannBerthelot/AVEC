@@ -1508,14 +1508,14 @@ class AvecOffPolicyAlgorithm(BaseAlgorithm):
                 self.num_timesteps + i,
                 TRUE_ALGO_NAME,
                 action=action,
-            )  # TODO : Save this to flanders
+            )
             MC_episode_lengths.append(MC_episode_length)
             nb_full_episodes.append(nb_full_episode)
             ent_coef = th.exp(self.log_ent_coef.detach())
 
             # Base agent
             with th.no_grad():
-                next_log_prob = self.actor.get_action_dist_params(th.Tensor(next_observation))[1]
+                _, next_log_prob = self.actor.action_log_prob(th.Tensor(next_observation))
                 next_q_values = th.cat(
                     self.critic(th.Tensor(next_observation), th.Tensor(next_action)),
                     dim=1,
