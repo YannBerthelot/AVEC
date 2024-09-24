@@ -139,7 +139,7 @@ if __name__ == "__main__":
             "alpha": alpha,
             "type_of_job": "train",
         },
-        mode="online",
+        mode="offline",
     )
     os.system("wandb artifact cache cleanup 1GB")
     env = make_vec_env(env_name, n_envs=n_envs)
