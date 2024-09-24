@@ -127,7 +127,7 @@ if __name__ == "__main__":
     agent_name = "PPO" if "PPO" in mode else "SAC"
     number = 7 if "PPO" in mode else 6
     run = wandb.init(
-        project=f"avec experiments {agent_name} 6",
+        project=f"avec experiments {agent_name} {number}",
         sync_tensorboard=True,
         config={
             "agent": mode,
