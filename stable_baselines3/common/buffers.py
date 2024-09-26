@@ -643,7 +643,7 @@ class AvecRolloutBuffer(BaseBuffer):
         self.returns = self.advantages + unbiased_values
 
         if alternate_last_values is not None:
-            alternate_last_values = last_values.clone().cpu().numpy().flatten()  # type: ignore[assignment]
+            alternate_last_values = alternate_last_values.clone().cpu().numpy().flatten()  # type: ignore[assignment]
             alternate_last_gae_lam = 0
             if self.correction:
                 correction_term = self.compute_correction_term(
@@ -669,7 +669,7 @@ class AvecRolloutBuffer(BaseBuffer):
                 self.alternate_deltas[step] = alternate_delta
             # TD(lambda) estimator, see Github PR #375 or "Telescoping in TD(lambda)"
             # in David Silver Lecture 4: https://www.youtube.com/watch?v=PnHCvfgC_ZA
-            
+
             self.alternate_returns = self.alternate_advantages + alternate_unbiased_values
 
     def add(

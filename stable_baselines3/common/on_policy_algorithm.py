@@ -805,12 +805,7 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
                     callback,
                     self.rollout_buffer,
                     n_rollout_steps=self.n_steps,
-                    flag=flag,
                     update=update,
-                    value_function_eval=VALUE_FUNCTION_EVAL,
-                    n_flags=n_flags,
-                    number_of_flags=number_of_flags,
-                    alpha=self.alpha,
                 )
 
                 if not continue_training:
