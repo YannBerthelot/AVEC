@@ -66,8 +66,8 @@ def upload_file(file_name, bucket, object_name=None):
 
 
 def copy_to_host_and_delete(source_file: Path, host: str, host_file: Path) -> None:
-    print(f"Uploading {host_file}")
-    upload_file(host_file, "bivwac", object_name=host_file)
+    print(f"Uploading {source_file}")
+    upload_file(source_file, "bivwac", object_name=host_file)
     # os.system(
     #     f"echo uploading {host_file} && SECONDS=0 & rsync -r {source_file} {host}:{host_file} && echo {host_file} success in $SECONDS seconds!"
     # )
