@@ -188,18 +188,22 @@ if __name__ == "__main__":
     n_steps = model.n_steps if "PPO" in mode else model.train_freq.frequency
     n_flags = 10
     save_freq = ceil((true_n_timesteps / n_steps) * (1 / n_flags)) * n_steps
-    checkpoint_callback = WandbCheckpointCallback(
-        save_freq=max(save_freq // n_envs, 1),
-        save_path="./models/",
-        name_prefix=f"{env_name}_{mode}_{alpha}_{seed}",
-        save_replay_buffer=True if "SAC" in mode else None,
-        save_vecnormalize=True,
-        n_steps=true_n_timesteps,
-        buffer_size=model.replay_buffer.buffer_size if "SAC" in mode else None,
-    )
+    save_files = (seed < 10) and (not "CORRECTED" in mode)
+    if save_files:
+        checkpoint_callback = WandbCheckpointCallback(
+            save_freq=max(save_freq // n_envs, 1),
+            save_path="./models/",
+            name_prefix=f"{env_name}_{mode}_{alpha}_{seed}",
+            save_replay_buffer=True if "SAC" in mode else None,
+            save_vecnormalize=True,
+            n_steps=true_n_timesteps,
+            buffer_size=model.replay_buffer.buffer_size if "SAC" in mode else None,
+        )
+    else:
+        checkpoint_callback = None
     model.learn(
         total_timesteps=true_n_timesteps,
-        callback=[checkpoint_callback, WandbCallback()] if seed < 10 and not "CORRECTED" in mode else WandbCallback(),
+        callback=[checkpoint_callback, WandbCallback()] if save_files else WandbCallback(),
         log_interval=1 if "PPO" in mode else 200,
     )
     run_path = "/" + os.path.join(*run.dir.split("/")[:-1])
