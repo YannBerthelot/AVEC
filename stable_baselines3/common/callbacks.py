@@ -9,8 +9,8 @@ import gymnasium as gym
 import numpy as np
 from math import ceil
 from stable_baselines3.common.logger import Logger
-from stable_baselines3.common.avec_utils import save_to_pickle
-from dotenv import load_dotenv
+from stable_baselines3.common.avec_utils import save_to_pickle, copy_to_host_and_delete
+
 
 try:
     from tqdm import TqdmExperimentalWarning
@@ -23,8 +23,6 @@ except ImportError:
     # if the progress bar is used
     tqdm = None
 
-import boto3
-from botocore.exceptions import ClientError
 
 from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.vec_env import DummyVecEnv, VecEnv, sync_envs_normalization
@@ -34,41 +32,6 @@ if TYPE_CHECKING:
 from pathlib import Path
 
 import logging
-
-
-def upload_file(file_name, bucket, object_name=None):
-    """Upload a file to an S3 bucket
-
-    :param file_name: File to upload
-    :param bucket: Bucket to upload to
-    :param object_name: S3 object name. If not specified then file_name is used
-    :return: True if file was uploaded, else False
-    """
-    load_dotenv("/home/yberthel/AVEC/.env")
-    aws_access_key_id = os.environ.get("ACCESS_KEY_ID")
-    aws_secret_access_key = os.environ.get("SECRET_ACCESS_KEY")
-    s3_client = boto3.client("s3", aws_access_key_id=aws_access_key_id, aws_secret_access_key=aws_secret_access_key)
-    # If S3 object_name was not specified, use file_name
-    if object_name is None:
-        object_name = os.path.basename(file_name)
-
-    # Upload the file
-    try:
-        response = s3_client.upload_file(file_name, bucket, object_name)
-    except ClientError as e:
-        logging.error(e)
-        return False
-    return True
-
-
-def copy_to_host_and_delete(source_file: Path, host: str, host_file: Path) -> None:
-    print(f"Uploading {source_file}")
-    upload_file(source_file, "bivwac", object_name=host_file)
-    # os.system(
-    #     f"echo uploading {host_file} && SECONDS=0 & rsync -r {source_file} {host}:{host_file} && echo {host_file} success in $SECONDS seconds!"
-    # )
-    if os.path.exists(source_file):
-        os.remove(source_file)
 
 
 class BaseCallback(ABC):
