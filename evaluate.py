@@ -205,7 +205,10 @@ if __name__ == "__main__":
         n_steps = model.n_steps if "PPO" in mode else model.train_freq.frequency
         save_freq = ceil((true_n_timesteps / n_steps) * (1 / number_of_flags)) * n_steps
         target_folder = os.path.join("/mnt/nfs_disk/yberthel/data", env_name, mode)
-        filename = f"{env_name}_{mode}_{alpha}_{seed}_{int(save_freq*flag)}"
+        adjust_const = 1 if true_n_timesteps % n_steps != 0 else 0
+        upper_bound = int(((true_n_timesteps // n_steps) + adjust_const) * n_steps)
+        timesteps = min(upper_bound, int(save_freq * flag))
+        filename = f"{env_name}_{mode}_{alpha}_{seed}_{timesteps}"
         copy_from_host(
             os.path.join(folder, filename + ".zip"),
             "flanders.gw",
@@ -213,7 +216,7 @@ if __name__ == "__main__":
         )
         assert os.path.exists(os.path.join(folder, filename + ".zip")), f"download failed for {filename}"
 
-        states_filename = f"states_{env_name}_{mode}_{alpha}_{seed}_{int(save_freq*flag)}"
+        states_filename = f"states_{env_name}_{mode}_{alpha}_{seed}_{timesteps}"
         copy_from_host(
             os.path.join(folder, states_filename + ".pkl"),
             "flanders.gw",
