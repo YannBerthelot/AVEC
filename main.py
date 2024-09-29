@@ -18,6 +18,7 @@ from functools import partial
 
 DEFAULT_N_STEPS = 2048
 DEFAULT_BUFFER_SIZE = 1_000_000
+from dotenv import load_dotenv
 
 
 def read_hyperparams_data(file_name):
@@ -64,6 +65,7 @@ def parse_hyperparams(env_name, hyperparams_data):
 
 
 if __name__ == "__main__":
+
     seed = int(sys.argv[1])
     env_name = str(sys.argv[2])
     mode = str(sys.argv[3])
@@ -75,6 +77,9 @@ if __name__ == "__main__":
     N_EVAL_TIMESTEPS = int(eval(sys.argv[8]))
     N_SAMPLES_MC = int(sys.argv[9])
     N_EVAL_ENVS = int(sys.argv[10])
+
+    load_dotenv(".env")
+    LOCAL = eval(os.environ.get("LOCAL"))
 
     num_threads = int(psutil.cpu_count() / psutil.cpu_count(logical=False))
     torch.set_num_threads(num_threads)
@@ -126,8 +131,9 @@ if __name__ == "__main__":
             )
     agent_name = "PPO" if "PPO" in mode else "SAC"
     number = 7 if "PPO" in mode else 6
+    prefix = " local" if LOCAL else ""
     run = wandb.init(
-        project=f"avec experiments {agent_name} {number}",
+        project=f"avec experiments {agent_name} {number}{prefix}",
         sync_tensorboard=True,
         config={
             "agent": mode,

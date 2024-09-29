@@ -1602,6 +1602,7 @@ class AvecOffPolicyAlgorithm(BaseAlgorithm):
         n_iterations: int = 10,
         alternate_alpha: float = 0.5,
         n_rollout_timesteps: float = int(1e6),
+        replay_buffer=None,
     ) -> RolloutReturn:
         """
         Collect experiences and store them into a ``ReplayBuffer``.
@@ -1625,25 +1626,30 @@ class AvecOffPolicyAlgorithm(BaseAlgorithm):
         # Switch to eval mode (this affects batch norm / dropout)
         self.policy.set_training_mode(False)
         self.n_eval_rollout_steps = n_rollout_timesteps
+        print("Computing true_grads")
+        self.replay_buffer = deepcopy(replay_buffer)
         true_grads = compute_or_load_true_grads(
             self,
             n_flags,
             number_of_flags,
             alpha=alpha,
         )
-
+        self.replay_buffer = deepcopy(replay_buffer)
         alternate_true_grads = compute_or_load_true_grads(
             self,
             n_flags,
             number_of_flags,
             alpha=alternate_alpha,
         )
+        print("Finished Computing true_grads")
         pairwise_similarities, alternate_pairwise_similarities = [], []
         grads_list, alternate_grads_list = [], []
-
-        for num_rollout in range(1, n_iterations + 1):
+        print("Computing consecutive grads")
+        for num_rollout in tqdm(range(1, n_iterations + 1)):
             update = num_rollout == n_iterations
-            self.env.reset()
+            self._last_obs = self.env.reset()
+            self._last_episode_starts = np.ones((self.env.num_envs,), dtype=bool)
+            self.replay_buffer = deepcopy(replay_buffer)
 
             rollout = self.collect_rollouts(
                 self.env,
