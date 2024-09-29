@@ -19,7 +19,7 @@ if __name__ == "__main__":
     n_samples_MC = int(sys.argv[9])
     n_eval_envs = int(sys.argv[10])
     asked_flag = int(sys.argv[11])
-    load_dotenv(".env")
+    load_dotenv("/home/yberthel/AVEC/.env")
     LOCAL = eval(os.environ.get("LOCAL"))
     dir_path = os.path.dirname(os.path.realpath(__file__))
     yaml_path = os.path.join(dir_path, "ppo.yml" if "PPO" in mode else "sac.yml")

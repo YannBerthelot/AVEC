@@ -78,7 +78,7 @@ if __name__ == "__main__":
     N_SAMPLES_MC = int(sys.argv[9])
     N_EVAL_ENVS = int(sys.argv[10])
 
-    load_dotenv(".env")
+    load_dotenv("/home/yberthel/AVEC/.env")
     LOCAL = eval(os.environ.get("LOCAL"))
 
     num_threads = int(psutil.cpu_count() / psutil.cpu_count(logical=False))
