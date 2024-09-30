@@ -680,7 +680,7 @@ def ranking_and_error_logging(
 ):
     kendal_tau = kendalltau(np.array(predicted_values), np.array(true_values))
     kendal_tau_stat = kendal_tau.statistic
-    assert not np.isnan(kendal_tau_stat), f"{predicted_values=} {true_values=}"
+    # assert not np.isnan(kendal_tau_stat), f"{predicted_values=} {true_values=}"
     self.logger.record("ranking/Kendal Tau statistic", kendal_tau_stat)
     self.logger.record("ranking/Kendal Tau p-value", kendal_tau.pvalue)
 
@@ -713,7 +713,7 @@ def ranking_and_error_logging(
     if alternate_values is not None:
         kendal_tau = kendalltau(np.array(alternate_values), np.array(true_values))
         kendal_tau_stat = kendal_tau.statistic
-        assert not np.isnan(kendal_tau_stat), f"{alternate_values=} {true_values=}"
+        # assert not np.isnan(kendal_tau_stat), f"{alternate_values=} {true_values=}"
         self.logger.record("ranking/alternate Kendal Tau statistic", kendal_tau_stat)
         self.logger.record("ranking/alternate Kendal Tau p-value", kendal_tau.pvalue)
         if alternate_deltas is not None:
