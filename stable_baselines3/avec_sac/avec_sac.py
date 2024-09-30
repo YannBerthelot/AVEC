@@ -364,7 +364,7 @@ class AVEC_SAC(AvecOffPolicyAlgorithm):
                 alternate_actor_losses.append(alternate_actor_loss.item())
 
             # Optimize the actor
-            self.actor.optimizer.zero_grad()
+            self.actor.optimizer.zero_grad() 
             alternate_actor_loss.backward(retain_graph=True)
             self.alternate_grads = get_grad_from_net(self.actor, alternate_grads)
 

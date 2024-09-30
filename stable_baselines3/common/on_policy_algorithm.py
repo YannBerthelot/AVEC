@@ -847,3 +847,101 @@ class AvecOnPolicyAlgorithm(BaseAlgorithm):
         state_dicts = ["policy", "policy.optimizer"]
 
         return state_dicts, []
+
+    def collect_rollouts_for_grads(
+        self,
+        timesteps: int,
+        alpha: float = None,
+        n_flags: int = None,
+        number_of_flags: int = None,
+        n_iterations: int = 10,
+        alternate_alpha: float = 0.5,
+        n_rollout_timesteps: float = int(1e6),
+    ):
+        """
+        Collect experiences and store them into a ``ReplayBuffer``.
+
+        :param env: The training environment
+        :param callback: Callback that will be called at each step
+            (and at the beginning and end of the rollout)
+        :param train_freq: How much experience to collect
+            by doing rollouts of current policy.
+            Either ``TrainFreq(<n>, TrainFrequencyUnit.STEP)``
+            or ``TrainFreq(<n>, TrainFrequencyUnit.EPISODE)``
+            with ``<n>`` being an integer greater than 0.
+        :param action_noise: Action noise that will be used for exploration
+            Required for deterministic policy (e.g. TD3). This can also be used
+            in addition to the stochastic policy for SAC.
+        :param learning_starts: Number of steps before learning for the warm-up phase.
+        :param replay_buffer:
+        :param log_interval: Log data every ``log_interval`` episodes
+        :return:
+        """
+        # Switch to eval mode (this affects batch norm / dropout)
+        self.policy.set_training_mode(False)
+        self.n_eval_rollout_steps = n_rollout_timesteps
+        print("Computing true_grads")
+        # self.replay_buffer = deepcopy(replay_buffer)
+        true_grads = compute_or_load_true_grads(
+            self,
+            n_flags,
+            number_of_flags,
+            alpha=alpha,
+        )
+        alternate_true_grads = compute_or_load_true_grads(
+            self,
+            n_flags,
+            number_of_flags,
+            alpha=alternate_alpha,
+        )
+        print("Finished Computing true_grads")
+        pairwise_similarities, alternate_pairwise_similarities = [], []
+        grads_list, alternate_grads_list = [], []
+        print("Computing consecutive grads")
+        for num_rollout in tqdm(range(1, n_iterations + 1)):
+            update = num_rollout == n_iterations
+            self._last_obs = self.env.reset()
+            self._last_episode_starts = np.ones((self.env.num_envs,), dtype=bool)
+            # self.replay_buffer = deepcopy(replay_buffer)
+
+            rollout = self.collect_rollouts(
+                self.env,
+                callback=None,
+                rollout_buffer=self.rollout_buffer,
+                update=False,
+                n_rollout_steps=self.n_eval_rollout_steps,
+            )
+
+            if self.num_timesteps > 0:
+                # If no `gradient_steps` is specified,
+                # do as many gradients steps as steps performed during the rollout
+                gradient_steps = 1
+                # Special case when the user passes `gradient_steps=0`
+
+                grads, alternate_grads, pairwise_similarities, alternate_pairwise_similarities = evaluate_and_log_grads(
+                    self,
+                    num_rollout,
+                    pairwise_similarities,
+                    alternate_pairwise_similarities,
+                    update,
+                    N_GRADIENT_ROLLOUTS,
+                    true_grads,
+                    alternate_true_grads,
+                    timesteps=timesteps,
+                )
+                grads_list.append(grads)
+                alternate_grads_list.append(alternate_grads)
+                self.train(n_epochs=gradient_steps)
+                self.old_grads = deepcopy(grads)
+                self.old_alternate_grads = deepcopy(alternate_grads)
+        var_grad = np.var(pairwise_similarities)
+        self.logger.record(
+            "gradients/variance of the gradients",
+            var_grad,
+        )
+        alternate_var_grad = np.var(alternate_pairwise_similarities)
+        self.logger.record(
+            "gradients/variance of the alternate gradients",
+            alternate_var_grad,
+        )
+        return grads_list, alternate_grads_list, true_grads, alternate_true_grads, var_grad, alternate_var_grad

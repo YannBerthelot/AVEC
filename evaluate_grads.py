@@ -67,16 +67,27 @@ if __name__ == "__main__":
             run,
             yaml_path,
         )
-        grads, alternate_grads, true_grads, alternate_true_grads, var_grad, alternate_var_grad = (
-            model.collect_rollouts_for_grads(
-                n_flags=flag,
-                number_of_flags=number_of_flags,
-                alpha=model.alpha,
-                timesteps=flag * save_freq,
-                n_rollout_timesteps=n_eval_timesteps,
-                replay_buffer=deepcopy(model.replay_buffer),
+        if "SAC" in mode:
+            grads, alternate_grads, true_grads, alternate_true_grads, var_grad, alternate_var_grad = (
+                model.collect_rollouts_for_grads(
+                    n_flags=flag,
+                    number_of_flags=number_of_flags,
+                    alpha=model.alpha,
+                    timesteps=flag * save_freq,
+                    n_rollout_timesteps=n_eval_timesteps,
+                    replay_buffer=deepcopy(model.replay_buffer),
+                )
             )
-        )
+        else:
+            grads, alternate_grads, true_grads, alternate_true_grads, var_grad, alternate_var_grad = (
+                model.collect_rollouts_for_grads(
+                    n_flags=flag,
+                    number_of_flags=number_of_flags,
+                    alpha=model.alpha,
+                    timesteps=flag * save_freq,
+                    n_rollout_timesteps=n_eval_timesteps,
+                )
+            )
 
         def grad_to_list(grads):
             if isinstance(grads[0], torch.Tensor):

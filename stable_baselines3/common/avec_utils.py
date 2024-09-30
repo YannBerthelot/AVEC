@@ -276,9 +276,7 @@ def get_true_grads_from_policy(self, alpha: float, env_name: str, num_envs: int 
             callback=None,
             n_rollout_steps=n_rollout_steps,
             rollout_buffer=rollout_buffer,
-            flag=False,
             update=False,
-            value_function_eval=False,
         )
         self.train(update=False, n_epochs=1, alpha=alpha)
     else:
@@ -345,7 +343,7 @@ def evaluate_and_log_grads(
     if "PPO" in self.true_algo_name:
         self.train(update=False, n_epochs=1)
         grads = deepcopy(self.grads)
-        self.train(update=False, n_epochs=1, alpha=0.0)
+        self.train(update=False, n_epochs=1, alpha=0.5)
         alternate_grads = deepcopy(self.grads)
     else:
         self.train(update=False, gradient_steps=1)
@@ -364,19 +362,19 @@ def evaluate_and_log_grads(
 
         self.logger.record(
             "gradients/convergence of the gradients to the true gradients",
-            compute_mean_pairwise_cosim_between_grads(self.grads, true_grads),
+            compute_mean_pairwise_cosim_between_grads(grads, true_grads),
         )
         self.logger.record(
             "gradients/convergence of the alternate gradients to the true gradients",
-            compute_mean_pairwise_cosim_between_grads(self.alternate_grads, true_grads),
+            compute_mean_pairwise_cosim_between_grads(alternate_grads, true_grads),
         )
         self.logger.record(
             "gradients/convergence of the alternate gradients to the true alternate gradients",
-            compute_mean_pairwise_cosim_between_grads(self.alternate_grads, alternate_true_grads),
+            compute_mean_pairwise_cosim_between_grads(alternate_grads, alternate_true_grads),
         )
         self.logger.record(
             "gradients/convergence of the gradients to the true alternate gradients",
-            compute_mean_pairwise_cosim_between_grads(self.grads, alternate_true_grads),
+            compute_mean_pairwise_cosim_between_grads(grads, alternate_true_grads),
         )
 
     if update:
