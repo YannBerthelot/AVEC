@@ -340,6 +340,8 @@ def evaluate_and_log_grads(
     alternate_true_grads,
     timesteps,
 ):
+    if isinstance(true_grads, torch.Tensor):
+        true_grads = true_grads.numpy()
     if "PPO" in self.true_algo_name:
         self.train(update=False, n_epochs=1)
         grads = deepcopy(self.grads)
@@ -349,6 +351,10 @@ def evaluate_and_log_grads(
         self.train(update=False, gradient_steps=1)
         grads = deepcopy(self.grads)
         alternate_grads = deepcopy(self.alternate_grads)
+    if isinstance(grads, torch.Tensor):
+        grads = grads.numpy()
+    if isinstance(alternate_grads, torch.Tensor):
+        alternate_grads = alternate_grads.numpy()
     if self.old_grads is not None:
         pairwise_cosine_sim = compute_pairwise_from_grads(grads, self.old_grads)
         alternate_pairwise_cosine_sim = compute_pairwise_from_grads(alternate_grads, self.old_alternate_grads)
