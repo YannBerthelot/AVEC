@@ -79,6 +79,9 @@ if __name__ == "__main__":
                 )
             )
         else:
+            from stable_baselines3.common.utils import explained_variance, get_schedule_fn
+
+            model.clip_range = get_schedule_fn(model.clip_range)
             grads, alternate_grads, true_grads, alternate_true_grads, var_grad, alternate_var_grad = (
                 model.collect_rollouts_for_grads(
                     n_flags=flag,
