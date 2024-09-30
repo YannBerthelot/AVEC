@@ -88,6 +88,7 @@ if __name__ == "__main__":
             else:
                 raise ValueError(f"Run {run.id} could not be found")
     run.finish()
-    os.remove(os.path.join(folder, buffer_filename + ".pkl"))
+    if "SAC" in mode:
+        os.remove(os.path.join(folder, buffer_filename + ".pkl"))
     os.system(f"source /home/yberthel/AVEC/venv/bin/activate && wandb sync {run_path} && wandb artifact cache cleanup 1GB")
     os.system(f". /home/yberthel/AVEC/venv/bin/activate && wandb sync {run_path} && wandb artifact cache cleanup 1GB")

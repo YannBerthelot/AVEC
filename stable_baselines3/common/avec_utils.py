@@ -985,6 +985,7 @@ def set_model(
 
     # )
     model._logger = utils.configure_logger(0, model.tensorboard_log, "run", False)
+    buffer_filename = None
     if "SAC" in mode:
         number_of_files_needed = ceil(n_steps / model.replay_buffer.buffer_size)
         buffer_files = []

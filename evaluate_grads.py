@@ -108,6 +108,8 @@ if __name__ == "__main__":
             else:
                 raise ValueError(f"Run {run.id} could not be found")
     run.finish()
+    if "SAC" in mode:
+        os.remove(os.path.join(folder, buffer_filename + ".pkl"))
     if LOCAL:
         os.system(f"wandb sync {run_path}")
     else:
