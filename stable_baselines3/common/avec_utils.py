@@ -399,7 +399,8 @@ def compute_true_values(self, state, action=None):
             self,
             self.n_eval_rollout_envs,
             state,
-            n_rollout_steps=ceil(self.n_eval_rollout_steps / self.n_eval_rollout_envs),
+            n_rollout_steps=self.n_eval_rollout_steps,
+            #n_rollout_steps=ceil(self.n_eval_rollout_steps / self.n_eval_rollout_envs),
         )
     else:
         assert action is not None, f"action is none for sac : {action=}"
