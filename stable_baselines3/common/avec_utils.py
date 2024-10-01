@@ -341,7 +341,7 @@ def evaluate_and_log_grads(
     timesteps,
 ):
     if isinstance(true_grads, torch.Tensor):
-        true_grads = true_grads.numpy()
+        true_grads = true_grads.cpu().detach().numpy()
     if "PPO" in self.true_algo_name:
         self.train(update=False, n_epochs=1)
         grads = deepcopy(self.grads)
@@ -352,9 +352,9 @@ def evaluate_and_log_grads(
         grads = deepcopy(self.grads)
         alternate_grads = deepcopy(self.alternate_grads)
     if isinstance(grads, torch.Tensor):
-        grads = grads.numpy()
+        grads = grads.cpu().detach().numpy()
     if isinstance(alternate_grads, torch.Tensor):
-        alternate_grads = alternate_grads.numpy()
+        alternate_grads = alternate_grads.cpu().detach().numpy()
     if self.old_grads is not None:
         pairwise_cosine_sim = compute_pairwise_from_grads(grads, self.old_grads)
         alternate_pairwise_cosine_sim = compute_pairwise_from_grads(alternate_grads, self.old_alternate_grads)
@@ -400,7 +400,7 @@ def compute_true_values(self, state, action=None):
             self.n_eval_rollout_envs,
             state,
             n_rollout_steps=self.n_eval_rollout_steps,
-            #n_rollout_steps=ceil(self.n_eval_rollout_steps / self.n_eval_rollout_envs),
+            # n_rollout_steps=ceil(self.n_eval_rollout_steps / self.n_eval_rollout_envs),
         )
     else:
         assert action is not None, f"action is none for sac : {action=}"
